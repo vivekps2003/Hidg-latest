@@ -5,6 +5,8 @@ import { Ionicons } from '@expo/vector-icons';
 // Screens
 import PickupOrders from '../screens/PickupOrders';
 import ProfileScreen from '../screens/profile';
+import PickupMapTab from '../screens/PickupMapTab';
+import PickupOffers from '../screens/PickupOffers';
 
 const Tab = createBottomTabNavigator();
 
@@ -31,21 +33,20 @@ export default function PickupTabs() {
           marginBottom: 4,
         },
 
-        tabBarIcon: ({ color, size }) => {
+        tabBarIcon: ({ focused, color, size }) => {
           let icon;
-
-          if (route.name === 'Orders') icon = 'list';
-          else if (route.name === 'Profile') icon = 'person';
+          if (route.name === 'My Pickups') icon = focused ? 'list' : 'list-outline';
+          else if (route.name === 'Offers') icon = focused ? 'pricetag' : 'pricetag-outline';
+          else if (route.name === 'Map') icon = focused ? 'map' : 'map-outline';
+          else if (route.name === 'Profile') icon = focused ? 'person' : 'person-outline';
           else icon = 'help-circle';
-
           return <Ionicons name={icon} size={size} color={color} />;
         },
       })}
     >
-      {/* Pickup Orders */}
-      <Tab.Screen name="Orders" component={PickupOrders} />
-
-      {/* Profile */}
+      <Tab.Screen name="My Pickups" component={PickupOrders} />
+      <Tab.Screen name="Offers" component={PickupOffers} />
+      <Tab.Screen name="Map" component={PickupMapTab} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

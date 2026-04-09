@@ -209,24 +209,44 @@ export default function SellerHome({ navigation }) {
           </View>
         </View>
 
-        {/* Main Action - Sell Scrap */}
-        <TouchableOpacity
-          activeOpacity={0.88}
-          onPress={() => navigation.navigate('SellScrap')}
-        >
-          <LinearGradient
-            colors={['#3b82f6', '#2563eb']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+        {/* Main Actions Row */}
+        <View style={styles.actionsRow}>
+          <TouchableOpacity
             style={styles.sellButton}
+            activeOpacity={0.88}
+            onPress={() => navigation.navigate('SellScrap')}
           >
-            <View style={styles.sellContent}>
-              <Text style={styles.sellMainText}>Sell Scrap Now</Text>
-              <Text style={styles.sellSubText}>Instant quote • Fast pickup</Text>
-            </View>
-            <Ionicons name="arrow-forward" size={32} color="white" />
-          </LinearGradient>
-        </TouchableOpacity>
+            <LinearGradient
+              colors={['#3b82f6', '#2563eb']}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={styles.gradientBtn}
+            >
+              <View style={styles.sellContent}>
+                <Text style={styles.sellMainText}>Sell Scrap Now</Text>
+                <Text style={styles.sellSubText}>Instant quote • Fast pickup</Text>
+              </View>
+              <Ionicons name="arrow-forward" size={28} color="white" />
+            </LinearGradient>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.scanButton}
+            activeOpacity={0.88}
+            onPress={() => navigation.navigate('Scan')}
+          >
+            <LinearGradient
+              colors={['#166534', '#15803d']}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={styles.gradientBtn}
+            >
+              <Ionicons name="scan-circle-outline" size={28} color="#4ade80" />
+              <View>
+                <Text style={styles.scanMainText}>AI Scan</Text>
+                <Text style={styles.scanSubText}>Identify waste</Text>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
 
         {/* Today's Prices from Nearest Agency */}
         <View style={styles.section}>
@@ -373,28 +393,18 @@ const styles = StyleSheet.create({
   location: { color: '#94a3b8', fontSize: 13 },
   profileBtn: { padding: 4 },
 
-  sellButton: {
-    borderRadius: 20,
-    paddingVertical: 28,
-    paddingHorizontal: 24,
-    marginBottom: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 12,
+  actionsRow: { flexDirection: 'row', gap: 12, marginBottom: 28 },
+  sellButton: { flex: 2 },
+  scanButton: { flex: 1 },
+  gradientBtn: {
+    borderRadius: 20, paddingVertical: 22, paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8,
   },
   sellContent: { flex: 1 },
-  sellMainText: {
-    color: 'white',
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-  },
-  sellSubText: { color: 'rgba(255,255,255,0.78)', fontSize: 14, marginTop: 4 },
+  sellMainText: { color: 'white', fontSize: 18, fontWeight: '800' },
+  sellSubText: { color: 'rgba(255,255,255,0.78)', fontSize: 12, marginTop: 3 },
+  scanMainText: { color: '#4ade80', fontSize: 15, fontWeight: '800' },
+  scanSubText: { color: 'rgba(74,222,128,0.7)', fontSize: 11, marginTop: 2 },
 
   section: { marginBottom: 28 },
   sectionHeaderRow: {

@@ -13,6 +13,11 @@ import SellScrap from './screens/SellScrap';
 import AgencyHome from './screens/AgencyHome';
 import CreateOrder from './screens/CreateOrder';
 import PickupTabs from './navigation/PickupTabs';
+import OrderTracking from './screens/OrderTracking';
+import PickupOrderDetails from './screens/PickupOrderDetails';
+import PickupMapScreen from './screens/PickupMapScreen';
+import RequestPickupAgent from './screens/RequestPickupAgent';
+import PickupOffers from './screens/PickupOffers';
 
 const Stack = createNativeStackNavigator();
 
@@ -36,6 +41,11 @@ export default function App() {
         <Stack.Screen name="CreateOrder" component={CreateOrder} />
 
         <Stack.Screen name="PickupTabs" component={PickupTabs} />
+        <Stack.Screen name="OrderTracking" component={OrderTracking} />
+        <Stack.Screen name="PickupOrderDetails" component={PickupOrderDetails} />
+        <Stack.Screen name="PickupMapScreen" component={PickupMapScreen} />
+        <Stack.Screen name="RequestPickupAgent" component={RequestPickupAgent} />
+        <Stack.Screen name="PickupOffers" component={PickupOffers} />
 
       </Stack.Navigator>
     </NavigationContainer>

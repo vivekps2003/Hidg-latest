@@ -8,13 +8,13 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   ActivityIndicator,
   Alert,
   RefreshControl,
   Animated,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
 import {
@@ -44,6 +44,8 @@ function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
   const status = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
   const isPending = order.status === 'pending';
   const isAccepted = order.status === 'accepted';
+  const isAssigned = order.status === 'assigned';
+  const isBelowMin = order.belowMinimum && order.minPickupKg > 0;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -107,6 +109,18 @@ function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
         </View>
       </View>
 
+      {/* Below Minimum Info */}
+      {isBelowMin && (
+        <View style={styles.belowMinBanner}>
+          <Ionicons name="alert-circle-outline" size={14} color="#fbbf24" />
+          <Text style={styles.belowMinText}>
+            {order.pickupAgentId
+              ? `Pickup agent assigned · ₹${order.commissionPerKg}/kg commission`
+              : `Below minimum (${order.minPickupKg} kg) · Awaiting pickup agent`}
+          </Text>
+        </View>
+      )}
+
       {/* Location chip if available */}
       {order.sellerLatitude && (
         <View style={styles.locationChip}>
@@ -152,8 +166,20 @@ function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
         </View>
       )}
 
-      {/* Track button for accepted orders */}
-      {isAccepted && (
+      {/* Assign Pickup Agent — removed: seller now broadcasts offer directly */}
+
+      {/* Pickup agent accepted info */}
+      {order.pickupAgentId && (
+        <View style={styles.agentAssignedRow}>
+          <Ionicons name="checkmark-circle" size={14} color="#34d399" />
+          <Text style={styles.agentAssignedText}>
+            Agent: {order.pickupAgentName || 'Assigned'} · ₹{order.commissionPerKg}/kg
+          </Text>
+        </View>
+      )}
+
+      {/* Track button for accepted/assigned orders */}
+      {(isAccepted || isAssigned) && (
         <TouchableOpacity style={styles.trackBtn} onPress={() => onTrack(order)}>
           <Ionicons name="car-outline" size={18} color="#0f172a" />
           <Text style={styles.trackBtnText}>Manage Pickup</Text>
@@ -174,7 +200,10 @@ export default function AgencyOrders({ navigation }) {
   // Real-time listener for this agency's orders
   useEffect(() => {
     const agencyId = auth.currentUser?.uid;
-    if (!agencyId) return;
+    if (!agencyId) {
+      setLoading(false);
+      return;
+    }
 
     const q = query(
       collection(db, 'orders'),
@@ -188,7 +217,8 @@ export default function AgencyOrders({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }, err => {
-      console.error('Orders fetch error:', err);
+      console.error('Orders fetch error:', err.code, err.message);
+      Alert.alert('Error', `Could not load orders: ${err.message}`);
       setLoading(false);
       setRefreshing(false);
     });
@@ -218,8 +248,10 @@ export default function AgencyOrders({ navigation }) {
                 navigation.navigate('OrderTracking', { order: { ...order, status: 'accepted' } });
               }
             } catch (e) {
-              console.error('Accept failed:', e);
-              Alert.alert('Error', 'Could not accept order. Please try again.');
+              console.error('Accept failed:', e.code, e.message);
+              Alert.alert('Error', e.code === 'permission-denied'
+                ? 'Permission denied. Check Firestore rules allow agency to update orders.'
+                : 'Could not accept order. Please try again.');
             } finally {
               setActionLoading(null);
             }
@@ -247,8 +279,10 @@ export default function AgencyOrders({ navigation }) {
                 updatedAt: serverTimestamp(),
               });
             } catch (e) {
-              console.error('Reject failed:', e);
-              Alert.alert('Error', 'Could not reject order. Please try again.');
+              console.error('Reject failed:', e.code, e.message);
+              Alert.alert('Error', e.code === 'permission-denied'
+                ? 'Permission denied. Check Firestore rules allow agency to update orders.'
+                : 'Could not reject order. Please try again.');
             } finally {
               setActionLoading(null);
             }
@@ -330,7 +364,9 @@ export default function AgencyOrders({ navigation }) {
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => setRefreshing(true)}
+              onRefresh={() => {
+                setRefreshing(true);
+              }}
               tintColor="#2563eb"
             />
           }
@@ -493,4 +529,25 @@ const styles = StyleSheet.create({
   loadingText: { color: '#64748b', fontSize: 15 },
   emptyTitle: { color: '#cbd5e1', fontSize: 20, fontWeight: '700' },
   emptySubtitle: { color: '#64748b', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+
+  belowMinBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#1c1a0f', borderRadius: 8, padding: 10,
+    marginTop: 10, borderWidth: 1, borderColor: '#78350f',
+  },
+  belowMinText: { color: '#fbbf24', fontSize: 12, flex: 1 },
+
+  assignPickupBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, marginTop: 12, paddingVertical: 13, borderRadius: 12,
+    backgroundColor: '#fbbf24',
+  },
+  assignPickupBtnText: { color: '#0f172a', fontSize: 14, fontWeight: '800' },
+
+  agentAssignedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#0a1f17', borderRadius: 8, padding: 10,
+    marginTop: 10, borderWidth: 1, borderColor: '#134e35',
+  },
+  agentAssignedText: { color: '#34d399', fontSize: 12, flex: 1 },
 });

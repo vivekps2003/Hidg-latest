@@ -24,6 +24,7 @@ import {
   where,
   getDocs,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   serverTimestamp,
@@ -53,6 +54,8 @@ const AgencyRates = () => {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingRate, setEditingRate] = useState(null);
   const [newPrice, setNewPrice] = useState('');
+  const [minPickupKg, setMinPickupKg] = useState('');
+  const [savingMin, setSavingMin] = useState(false);
 
   const auth = getAuth();
   const user = auth.currentUser;
@@ -62,6 +65,11 @@ const AgencyRates = () => {
     if (!user) return;
 
     try {
+      // Fetch minPickupKg from users doc
+      const userSnap = await getDoc(doc(db, 'users', user.uid));
+      if (userSnap.exists()) {
+        setMinPickupKg(String(userSnap.data().minPickupKg || ''));
+      }
       const q = query(
         collection(db, 'scrap_rates'),
         where('agencyId', '==', user.uid)
@@ -155,6 +163,26 @@ const AgencyRates = () => {
     setRefreshing(false);
   }, [fetchRates]);
 
+  const saveMinPickupKg = async () => {
+    const val = parseFloat(minPickupKg);
+    if (isNaN(val) || val < 0) {
+      Alert.alert('Invalid', 'Enter a valid minimum kg (0 = no minimum).');
+      return;
+    }
+    setSavingMin(true);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        minPickupKg: val,
+        updatedAt: serverTimestamp(),
+      });
+      Alert.alert('Saved', `Minimum pickup set to ${val} kg.`);
+    } catch (e) {
+      Alert.alert('Error', 'Could not save. Try again.');
+    } finally {
+      setSavingMin(false);
+    }
+  };
+
   const openEditModal = (rate) => {
     setEditingRate(rate);
     setNewPrice(rate.pricePerKg.toString());
@@ -224,6 +252,39 @@ const AgencyRates = () => {
       >
         <Text style={styles.screenTitle}>Agency Scrap Rates</Text>
 
+        {/* Minimum Pickup Setting */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="scale-outline" size={24} color="#60a5fa" />
+            <Text style={styles.cardTitle}>Minimum Pickup Weight</Text>
+          </View>
+          <Text style={styles.minDesc}>
+            Orders below this weight will be flagged for pickup agent assignment.
+          </Text>
+          <View style={styles.minRow}>
+            <TextInput
+              style={styles.minInput}
+              value={minPickupKg}
+              onChangeText={setMinPickupKg}
+              keyboardType="numeric"
+              placeholder="e.g. 50"
+              placeholderTextColor="#475569"
+            />
+            <Text style={styles.minUnit}>kg</Text>
+            <TouchableOpacity
+              style={[styles.minSaveBtn, savingMin && { opacity: 0.6 }]}
+              onPress={saveMinPickupKg}
+              disabled={savingMin}
+            >
+              {savingMin
+                ? <ActivityIndicator size="small" color="#fff" />
+                : <Text style={styles.minSaveBtnText}>Save</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Current Buying Rates */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Ionicons name="pricetag-outline" size={24} color="#FFCA28" />
@@ -457,6 +518,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
   },
+  minDesc: { color: '#94a3b8', fontSize: 13, marginBottom: 12 },
+  minRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  minInput: {
+    flex: 1, backgroundColor: '#252525', borderRadius: 10, padding: 12,
+    color: '#fff', fontSize: 16, borderWidth: 1, borderColor: '#424242',
+  },
+  minUnit: { color: '#94a3b8', fontSize: 15 },
+  minSaveBtn: {
+    backgroundColor: '#2563eb', borderRadius: 10,
+    paddingHorizontal: 18, paddingVertical: 12,
+  },
+  minSaveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
 
 export default AgencyRates;

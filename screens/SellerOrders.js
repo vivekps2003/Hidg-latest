@@ -163,12 +163,36 @@ export default function SellerOrders({ navigation }) {
             </Text>
           </View>
 
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Estimated Payout</Text>
-            <Text style={[styles.summaryValue, styles.payoutValue]}>
-              ₹{(item.estimatedAmount ?? 0).toLocaleString('en-IN')}
-            </Text>
-          </View>
+          {item.sellerNetAmount != null ? (
+            <>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Gross Payout</Text>
+                <Text style={styles.summaryValue}>
+                  ₹{(item.estimatedAmount ?? 0).toLocaleString('en-IN')}
+                </Text>
+              </View>
+              <View style={styles.commissionRow}>
+                <Ionicons name="remove-circle-outline" size={14} color="#f87171" />
+                <Text style={styles.commissionLabel}>
+                  Pickup Commission (₹{item.commissionPerKg}/kg × {item.totalKg} kg)
+                </Text>
+                <Text style={styles.commissionValue}>−₹{item.totalCommission}</Text>
+              </View>
+              <View style={[styles.summaryRow, styles.netRow]}>
+                <Text style={styles.netLabel}>Your Net Payout</Text>
+                <Text style={styles.netValue}>
+                  ₹{(item.sellerNetAmount).toLocaleString('en-IN')}
+                </Text>
+              </View>
+            </>
+          ) : (
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Estimated Payout</Text>
+              <Text style={[styles.summaryValue, styles.payoutValue]}>
+                ₹{(item.estimatedAmount ?? 0).toLocaleString('en-IN')}
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* Picked Up Confirmation */}
@@ -379,4 +403,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
+  commissionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1f0a0a',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 4,
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+  },
+  commissionLabel: { color: '#f87171', fontSize: 12, flex: 1 },
+  commissionValue: { color: '#f87171', fontSize: 13, fontWeight: '700' },
+  netRow: {
+    marginTop: 4,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+  },
+  netLabel: { color: '#f1f5f9', fontSize: 15, fontWeight: '700' },
+  netValue: { color: '#4ade80', fontSize: 17, fontWeight: '800' },
 });

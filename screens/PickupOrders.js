@@ -1,207 +1,116 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-  SafeAreaView,
-  Dimensions,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  StatusBar, ActivityIndicator, Alert, RefreshControl,
 } from 'react-native';
-import { onSnapshot, collection, query, where, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
-import { format } from 'date-fns';
+import {
+  collection, query, where, onSnapshot,
+  doc, updateDoc, serverTimestamp, orderBy,
+} from 'firebase/firestore';
 
-const { width } = Dimensions.get('window');
+const STATUS_CONFIG = {
+  assigned:    { label: 'Assigned',    color: '#fbbf24', bg: '#1c1a0f', icon: 'person-outline' },
+  accepted:    { label: 'Accepted',    color: '#60a5fa', bg: '#0a1020', icon: 'checkmark-circle-outline' },
+  in_progress: { label: 'In Progress', color: '#a78bfa', bg: '#130a1f', icon: 'car-outline' },
+  picked:      { label: 'Picked Up',   color: '#34d399', bg: '#0a1f17', icon: 'cube-outline' },
+  completed:   { label: 'Completed',   color: '#4ade80', bg: '#0a1f0a', icon: 'ribbon-outline' },
+};
+
+const NEXT_ACTION = {
+  assigned:    { label: 'Accept Pickup',   next: 'accepted',    color: '#60a5fa' },
+  accepted:    { label: 'Start Trip',      next: 'in_progress', color: '#a78bfa' },
+  in_progress: { label: 'Mark Picked Up',  next: 'picked',      color: '#34d399' },
+  picked:      { label: 'Complete Order',  next: 'completed',   color: '#4ade80' },
+};
+
+const FILTER_TABS = ['All', 'Assigned', 'Active', 'Completed'];
 
 export default function PickupOrders({ navigation }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activeFilter, setActiveFilter] = useState('All');
+  const [actionLoading, setActionLoading] = useState(null);
+  const [fetchTick, setFetchTick] = useState(0);
 
   useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged((user) => {
-      if (user) {
-        setCurrentUser(user);
-      } else {
-        setCurrentUser(null);
-        setOrders([]);
-        setLoading(false);
-      }
+    const uid = auth.currentUser?.uid;
+    if (!uid) { setLoading(false); return; }
+
+    const q = query(
+      collection(db, 'orders'),
+      where('pickupAgentId', '==', uid),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsub = onSnapshot(q, snap => {
+      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+      setRefreshing(false);
+    }, err => {
+      console.error('PickupOrders error:', err.code, err.message);
+      Alert.alert('Error', err.message);
+      setLoading(false);
+      setRefreshing(false);
     });
 
-    return () => unsubscribeAuth();
+    return () => unsub();
+  }, [fetchTick]);
+
+  const handleAction = useCallback(async (order) => {
+    const action = NEXT_ACTION[order.status];
+    if (!action) return;
+
+    Alert.alert(
+      action.label,
+      `Confirm: "${action.label}" for order #${order.id.slice(-6).toUpperCase()}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm',
+          onPress: async () => {
+            setActionLoading(order.id);
+            try {
+              await updateDoc(doc(db, 'orders', order.id), {
+                status: action.next,
+                updatedAt: serverTimestamp(),
+                ...(action.next === 'in_progress' && { tripStartedAt: serverTimestamp() }),
+                ...(action.next === 'picked'      && { pickedUpAt: serverTimestamp() }),
+                ...(action.next === 'completed'   && { completedAt: serverTimestamp() }),
+              });
+            } catch (e) {
+              Alert.alert('Error', e.code === 'permission-denied'
+                ? 'Permission denied. Check Firestore rules.'
+                : 'Could not update. Try again.');
+            } finally {
+              setActionLoading(null);
+            }
+          },
+        },
+      ]
+    );
   }, []);
 
-  useEffect(() => {
-    if (!currentUser?.uid) {
-      setLoading(false);
-      return;
-    }
+  const filteredOrders = orders.filter(o => {
+    if (activeFilter === 'All') return true;
+    if (activeFilter === 'Assigned') return o.status === 'assigned';
+    if (activeFilter === 'Active') return ['accepted', 'in_progress', 'picked'].includes(o.status);
+    if (activeFilter === 'Completed') return o.status === 'completed';
+    return true;
+  });
 
-    setLoading(true);
-
-    const ordersRef = collection(db, 'orders');
-    const q = query(
-      ordersRef,
-      where('pickupAgentId', '==', currentUser.uid)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const fetchedOrders = snapshot.docs.map((docSnap) => ({
-          id: docSnap.id,
-          ...docSnap.data(),
-        }));
-
-        // Sort by createdAt descending (newest first)
-        fetchedOrders.sort((a, b) => {
-          const timeA = a.createdAt?.toMillis?.() || 0;
-          const timeB = b.createdAt?.toMillis?.() || 0;
-          return timeB - timeA;
-        });
-
-        setOrders(fetchedOrders);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Error fetching pickup orders:', error);
-        Alert.alert('Error', 'Failed to load pickup orders. Please try again.');
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [currentUser]);
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'assigned':
-        return '#f59e0b'; // orange
-      case 'accepted':
-        return '#3b82f6'; // blue
-      case 'in_progress':
-        return '#8b5cf6'; // purple
-      case 'picked':
-        return '#14b8a6'; // teal
-      case 'completed':
-        return '#10b981'; // green
-      default:
-        return '#64748b';
-    }
-  };
-
-  const getStatusLabel = (status) => {
-    return status
-      ? status.charAt(0).toUpperCase() + status.slice(1).replace('_', ' ')
-      : 'Unknown';
-  };
-
-  const getNextAction = (status) => {
-    switch (status) {
-      case 'assigned':
-        return { label: 'Accept Pickup', nextStatus: 'accepted' };
-      case 'accepted':
-        return { label: 'Start Trip', nextStatus: 'in_progress' };
-      case 'in_progress':
-        return { label: 'Mark as Picked', nextStatus: 'picked' };
-      case 'picked':
-        return { label: 'Complete Order', nextStatus: 'completed' };
-      default:
-        return null;
-    }
-  };
-
-  const updateOrderStatus = async (orderId, nextStatus) => {
-    if (!orderId) return;
-
-    try {
-      const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, {
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Optimistic update is handled by onSnapshot
-      Alert.alert('Success', `Order status updated to ${getStatusLabel(nextStatus)}`);
-    } catch (error) {
-      console.error('Error updating order status:', error);
-      Alert.alert('Update Failed', 'Could not update order status. Please try again.');
-    }
-  };
-
-  const handleOrderPress = (order) => {
-    navigation.navigate('PickupOrderDetails', { order });
-  };
-
-  const formatDate = (timestamp) => {
-    if (!timestamp) return 'N/A';
-    try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return format(date, 'dd MMM yyyy, hh:mm a');
-    } catch {
-      return 'N/A';
-    }
-  };
-
-  const renderOrderCard = (order) => {
-    const action = getNextAction(order.status);
-    const totalKg = order.totalKg || 0;
-    const estimatedAmount = order.estimatedAmount || 0;
-
-    return (
-      <TouchableOpacity
-        key={order.id}
-        style={styles.orderCard}
-        onPress={() => handleOrderPress(order)}
-        activeOpacity={0.9}
-      >
-        <View style={styles.cardHeader}>
-          <Text style={styles.agencyName}>{order.agencyName || 'Unknown Agency'}</Text>
-          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(order.status) + '30' }]}>
-            <Text style={[styles.statusText, { color: getStatusColor(order.status) }]}>
-              {getStatusLabel(order.status)}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.detailsRow}>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>Total Weight</Text>
-            <Text style={styles.detailValue}>{totalKg} kg</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>Est. Amount</Text>
-            <Text style={styles.detailValue}>₹{estimatedAmount.toLocaleString('en-IN')}</Text>
-          </View>
-        </View>
-
-        <Text style={styles.dateText}>Created: {formatDate(order.createdAt)}</Text>
-
-        {action && (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={(e) => {
-              e.stopPropagation(); // Prevent navigating when tapping button
-              updateOrderStatus(order.id, action.nextStatus);
-            }}
-          >
-            <Text style={styles.actionButtonText}>{action.label}</Text>
-          </TouchableOpacity>
-        )}
-      </TouchableOpacity>
-    );
-  };
+  const assignedCount = orders.filter(o => o.status === 'assigned').length;
 
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#3b82f6" />
-          <Text style={styles.loadingText}>Loading pickup orders...</Text>
+        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#2563eb" />
+          <Text style={styles.loadingText}>Loading orders...</Text>
         </View>
       </SafeAreaView>
     );
@@ -209,25 +118,153 @@ export default function PickupOrders({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+
+      {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>My Pickup Orders</Text>
-        <Text style={styles.headerSubtitle}>Real-time updates from agencies</Text>
+        <View>
+          <Text style={styles.headerTitle}>Pickup Orders</Text>
+          <Text style={styles.headerSub}>
+            {assignedCount > 0 ? `${assignedCount} new assignment${assignedCount > 1 ? 's' : ''}` : 'All caught up'}
+          </Text>
+        </View>
+        {assignedCount > 0 && (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{assignedCount}</Text>
+          </View>
+        )}
       </View>
 
+      {/* Filter Tabs */}
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        horizontal showsHorizontalScrollIndicator={false}
+        style={styles.filterRow}
+        contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
       >
-        {orders.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>📦</Text>
-            <Text style={styles.emptyTitle}>No pickup orders assigned</Text>
-            <Text style={styles.emptySubtitle}>
-              New orders from agencies will appear here automatically
+        {FILTER_TABS.map(tab => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.filterTab, activeFilter === tab && styles.filterTabActive]}
+            onPress={() => setActiveFilter(tab)}
+          >
+            <Text style={[styles.filterTabText, activeFilter === tab && styles.filterTabTextActive]}>
+              {tab}
             </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* List */}
+      <ScrollView
+        contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); setFetchTick(t => t + 1); }}
+            tintColor="#2563eb"
+          />
+        }
+      >
+        {filteredOrders.length === 0 ? (
+          <View style={styles.centered}>
+            <Ionicons name="cube-outline" size={56} color="#334155" />
+            <Text style={styles.emptyTitle}>No {activeFilter === 'All' ? '' : activeFilter} Orders</Text>
+            <Text style={styles.emptySubtitle}>New assignments will appear here automatically.</Text>
           </View>
         ) : (
-          orders.map(renderOrderCard)
+          filteredOrders.map(order => {
+            const cfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.assigned;
+            const action = NEXT_ACTION[order.status];
+            const isActing = actionLoading === order.id;
+            const timeStr = order.createdAt?.toDate?.()?.toLocaleString('en-IN', {
+              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+            }) ?? 'Just now';
+
+            return (
+              <TouchableOpacity
+                key={order.id}
+                style={styles.card}
+                onPress={() => navigation.navigate('PickupOrderDetails', { order })}
+                activeOpacity={0.85}
+              >
+                {/* Card Header */}
+                <View style={styles.cardTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardLabel}>Pickup Assignment</Text>
+                    <Text style={styles.cardId}>#{order.id.slice(-6).toUpperCase()}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: cfg.bg, borderColor: cfg.color }]}>
+                    <Ionicons name={cfg.icon} size={12} color={cfg.color} />
+                    <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+                  </View>
+                </View>
+
+                {/* Agency */}
+                <View style={styles.metaRow}>
+                  <Ionicons name="business-outline" size={13} color="#64748b" />
+                  <Text style={styles.metaText}>{order.agencyName || 'Agency'}</Text>
+                  <Ionicons name="calendar-outline" size={13} color="#64748b" style={{ marginLeft: 12 }} />
+                  <Text style={styles.metaText}>{timeStr}</Text>
+                </View>
+
+                <View style={styles.divider} />
+
+                {/* Stats */}
+                <View style={styles.statsRow}>
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Weight</Text>
+                    <Text style={styles.statValue}>{order.totalKg} kg</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Payout</Text>
+                    <Text style={[styles.statValue, { color: '#60a5fa' }]}>₹{order.estimatedAmount}</Text>
+                  </View>
+                  <View style={styles.statDivider} />
+                  <View style={styles.statItem}>
+                    <Text style={styles.statLabel}>Items</Text>
+                    <Text style={styles.statValue}>{order.materials?.length ?? 0}</Text>
+                  </View>
+                </View>
+
+                {/* Location chip */}
+                {order.sellerLatitude && (
+                  <TouchableOpacity
+                    style={styles.locationChip}
+                    onPress={() => navigation.navigate('PickupMapScreen', { order })}
+                  >
+                    <Ionicons name="navigate-circle-outline" size={14} color="#34d399" />
+                    <Text style={styles.locationText}>
+                      {order.sellerLatitude.toFixed(4)}, {order.sellerLongitude.toFixed(4)}
+                    </Text>
+                    <Ionicons name="map-outline" size={13} color="#34d399" />
+                    <Text style={styles.locationText}>View Map</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Action Button */}
+                {action && (
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: action.color }, isActing && { opacity: 0.6 }]}
+                    onPress={() => handleAction(order)}
+                    disabled={isActing}
+                  >
+                    {isActing
+                      ? <ActivityIndicator size="small" color="#0f172a" />
+                      : <Text style={styles.actionBtnText}>{action.label}</Text>
+                    }
+                  </TouchableOpacity>
+                )}
+
+                {order.status === 'completed' && (
+                  <View style={styles.completedRow}>
+                    <Ionicons name="checkmark-circle" size={16} color="#4ade80" />
+                    <Text style={styles.completedText}>Order Completed</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })
         )}
       </ScrollView>
     </SafeAreaView>
@@ -235,126 +272,75 @@ export default function PickupOrders({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-  },
+  container: { flex: 1, backgroundColor: '#0f172a' },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingTop: 80 },
+  loadingText: { color: '#64748b', fontSize: 15 },
+  emptyTitle: { color: '#cbd5e1', fontSize: 20, fontWeight: '700' },
+  emptySubtitle: { color: '#64748b', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+
   header: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#f1f5f9',
+  headerTitle: { color: '#f1f5f9', fontSize: 24, fontWeight: '800' },
+  headerSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
+  badge: {
+    backgroundColor: '#fbbf24', borderRadius: 20, minWidth: 32, height: 32,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10,
   },
-  headerSubtitle: {
-    fontSize: 15,
-    color: '#94a3b8',
-    marginTop: 4,
+  badgeText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+
+  filterRow: { maxHeight: 52, marginBottom: 4 },
+  filterTab: {
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155',
   },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 100,
+  filterTabActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
+  filterTabText: { color: '#94a3b8', fontSize: 13, fontWeight: '600' },
+  filterTabTextActive: { color: '#fff' },
+
+  listContent: { padding: 16, paddingBottom: 40, gap: 16 },
+
+  card: {
+    backgroundColor: '#1e293b', borderRadius: 18, padding: 18,
+    borderWidth: 1, borderColor: '#334155',
   },
-  orderCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 16,
-  },
-  agencyName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#f1f5f9',
-    flex: 1,
-    paddingRight: 12,
-  },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+  cardLabel: { color: '#64748b', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 },
+  cardId: { color: '#f1f5f9', fontSize: 20, fontWeight: '800', marginTop: 2 },
   statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1,
   },
-  statusText: {
-    fontSize: 13,
-    fontWeight: '700',
-    textTransform: 'capitalize',
+  statusText: { fontSize: 11, fontWeight: '700' },
+
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 12 },
+  metaText: { color: '#64748b', fontSize: 12 },
+
+  divider: { height: 1, backgroundColor: '#334155', marginBottom: 12 },
+
+  statsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', marginBottom: 12 },
+  statItem: { alignItems: 'center', flex: 1 },
+  statLabel: { color: '#64748b', fontSize: 12, marginBottom: 4 },
+  statValue: { color: '#f1f5f9', fontSize: 17, fontWeight: '700' },
+  statDivider: { width: 1, height: 32, backgroundColor: '#334155' },
+
+  locationChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#0a1f17', borderRadius: 8, paddingHorizontal: 10,
+    paddingVertical: 6, marginBottom: 12, borderWidth: 1, borderColor: '#134e35',
   },
-  detailsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  locationText: { color: '#34d399', fontSize: 11, flex: 1 },
+
+  actionBtn: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 14, borderRadius: 12,
   },
-  detailItem: {
-    flex: 1,
+  actionBtnText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+
+  completedRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10,
   },
-  detailLabel: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#e2e8f0',
-  },
-  dateText: {
-    fontSize: 13,
-    color: '#64748b',
-    marginBottom: 20,
-  },
-  actionButton: {
-    backgroundColor: '#2563eb',
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  actionButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#94a3b8',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 80,
-  },
-  emptyIcon: {
-    fontSize: 64,
-    marginBottom: 20,
-  },
-  emptyTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#f1f5f9',
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 15,
-    color: '#94a3b8',
-    textAlign: 'center',
-    lineHeight: 22,
-    maxWidth: '80%',
-  },
+  completedText: { color: '#4ade80', fontSize: 14, fontWeight: '700' },
 });
