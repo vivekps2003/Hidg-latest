@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    // Helper function to get user role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isSignedIn() && getUserRole() == 'admin';
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Anyone authenticated can read user profiles
+      allow read: if isSignedIn();
+      
+      // Users can only create/update their own profile
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSignedIn() && (isOwner(userId) || isAdmin());
+      
+      // Only admins can delete users
+      allow delete: if isAdmin();
+    }
+    
+    // Orders collection
+    match /orders/{orderId} {
+      // Anyone authenticated can read orders they're involved in
+      allow read: if isSignedIn() && (
+        resource.data.sellerId == request.auth.uid ||
+        resource.data.agencyId == request.auth.uid ||
+        resource.data.pickupAgentId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Only sellers can create orders
+      allow create: if isSignedIn() && 
+        request.resource.data.sellerId == request.auth.uid;
+      
+      // Sellers, agencies, pickup agents, and admins can update orders
+      allow update: if isSignedIn() && (
+        resource.data.sellerId == request.auth.uid ||
+        resource.data.agencyId == request.auth.uid ||
+        resource.data.pickupAgentId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Only admins can delete orders
+      allow delete: if isAdmin();
+    }
+    
+    // Notifications collection
+    match /notifications/{notifId} {
+      // Users can only read their own notifications
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Anyone authenticated can create notifications
+      allow create: if isSignedIn();
+      
+      // Users can only update their own notifications (mark as read)
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Users can delete their own notifications
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Pickup offers collection
+    match /pickup_offers/{offerId} {
+      // Sellers and pickup agents can read offers
+      allow read: if isSignedIn() && (
+        resource.data.sellerId == request.auth.uid ||
+        resource.data.pickupAgentId == request.auth.uid ||
+        resource.data.agencyId == request.auth.uid ||
+        isAdmin()
+      );
+      
+      // Only pickup agents can create offers
+      allow create: if isSignedIn() && 
+        request.resource.data.pickupAgentId == request.auth.uid;
+      
+      // Sellers and pickup agents can update offers
+      allow update: if isSignedIn() && (
+        resource.data.sellerId == request.auth.uid ||
+        resource.data.pickupAgentId == request.auth.uid
+      );
+      
+      // Only admins can delete offers
+      allow delete: if isAdmin();
+    }
+    
+    // Rates collection (agency pricing)
+    match /rates/{rateId} {
+      // Anyone can read rates
+      allow read: if true;
+      
+      // Only agencies can create/update their own rates
+      allow create, update: if isSignedIn() && 
+        request.resource.data.agencyId == request.auth.uid;
+      
+      // Only agencies and admins can delete rates
+      allow delete: if isSignedIn() && (
+        resource.data.agencyId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+    
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

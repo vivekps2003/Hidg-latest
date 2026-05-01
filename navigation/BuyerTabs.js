@@ -1,5 +1,3 @@
-// navigation/BuyerTabs.js (or AgencyTabs.js)
-
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,44 +14,31 @@ const BuyerTabs = () => {
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarActiveTintColor: '#4CAF50',
-        tabBarInactiveTintColor: '#888',
         tabBarStyle: {
-          backgroundColor: '#121212',
-          borderTopColor: '#1e1e1e',
-          borderTopWidth: 1,
+          backgroundColor: '#FFFFFF',
+          borderTopColor: '#FDE68A',
+          borderTopWidth: 1.5,
+          height: 70,
+          paddingBottom: 8,
+          paddingTop: 4,
         },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
-        },
+        tabBarActiveTintColor: '#D97706',
+        tabBarInactiveTintColor: '#A8A29E',
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-
-          switch (route.name) {
-            case 'Home':
-              iconName = focused ? 'home' : 'home-outline';
-              break;
-            case 'Orders':
-              iconName = focused ? 'list' : 'list-outline';
-              break;
-            case 'Rates':
-              iconName = focused ? 'cash' : 'cash-outline';
-              break;
-            case 'Profile':
-              iconName = focused ? 'person' : 'person-outline';
-              break;
-            default:
-              iconName = 'help-circle-outline';
-          }
-
-          return <Ionicons name={iconName} size={size} color={color} />;
+          const icons = {
+            Home:    focused ? 'home'         : 'home-outline',
+            Orders:  focused ? 'list'         : 'list-outline',
+            Rates:   focused ? 'pricetag'     : 'pricetag-outline',
+            Profile: focused ? 'person'       : 'person-outline',
+          };
+          return <Ionicons name={icons[route.name] || 'help-circle-outline'} size={size} color={color} />;
         },
       })}
     >
-      <Tab.Screen name="Home" component={AgencyHome} />
-      <Tab.Screen name="Orders" component={AgencyOrders} />
-      <Tab.Screen name="Rates" component={AgencyRates} />
+      <Tab.Screen name="Home"    component={AgencyHome} />
+      <Tab.Screen name="Orders"  component={AgencyOrders} />
+      <Tab.Screen name="Rates"   component={AgencyRates} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

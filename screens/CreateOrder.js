@@ -6,8 +6,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import * as Location from 'expo-location';
+import { sendNotification, NotificationTemplates } from '../notificationHelper';
 
 export default function CreateOrder({ route, navigation }) {
   const { agency } = route.params || {};
@@ -20,7 +21,6 @@ export default function CreateOrder({ route, navigation }) {
 
   const [quantities, setQuantities] = useState({});
   const [loading, setLoading] = useState(false);
-  const [commissionPerKg, setCommissionPerKg] = useState('');
 
   React.useEffect(() => {
     const initial = {};
@@ -43,9 +43,6 @@ export default function CreateOrder({ route, navigation }) {
   const { totalKg, estimatedAmount } = calculateTotals();
   const minKg = agency.minPickupKg || 0;
   const isBelowMin = minKg > 0 && totalKg > 0 && totalKg < minKg;
-  const commission = parseFloat(commissionPerKg) || 0;
-  const totalCommission = parseFloat((commission * totalKg).toFixed(0));
-  const sellerNetAmount = parseFloat((estimatedAmount - totalCommission).toFixed(0));
 
   const hasAnyQuantity = () => Object.values(quantities).some(q => parseFloat(q) > 0);
 
@@ -57,19 +54,6 @@ export default function CreateOrder({ route, navigation }) {
   const handleSubmit = async () => {
     if (!hasAnyQuantity()) {
       Alert.alert('No materials', 'Enter quantity for at least one material.');
-      return;
-    }
-
-    if (isBelowMin && commission <= 0) {
-      Alert.alert(
-        'Set Commission',
-        `Your order (${totalKg} kg) is below the agency minimum (${minKg} kg).\n\nSet a commission per kg to offer nearest pickup agents to collect and deliver to the agency.`
-      );
-      return;
-    }
-
-    if (isBelowMin && sellerNetAmount < 0) {
-      Alert.alert('Invalid Commission', 'Commission cannot exceed your total payout.');
       return;
     }
 
@@ -104,14 +88,22 @@ export default function CreateOrder({ route, navigation }) {
     const finalTotalKg = parseFloat(totalKgNum.toFixed(1));
     const finalEstimated = parseFloat(estimatedAmountNum.toFixed(0));
     const belowMinimum = minKg > 0 && finalTotalKg < minKg;
-    const finalCommission = belowMinimum ? commission : 0;
-    const finalTotalCommission = belowMinimum ? parseFloat((finalCommission * finalTotalKg).toFixed(0)) : 0;
-    const finalNetAmount = belowMinimum
-      ? parseFloat((finalEstimated - finalTotalCommission).toFixed(0))
-      : finalEstimated;
+
+    // Get seller name
+    let sellerName = 'Seller';
+    try {
+      const userQuery = query(collection(db, 'users'), where('__name__', '==', auth.currentUser.uid));
+      const userSnap = await getDocs(userQuery);
+      if (!userSnap.empty) {
+        sellerName = userSnap.docs[0].data().name || 'Seller';
+      }
+    } catch (e) {
+      console.log('Failed to get seller name:', e);
+    }
 
     const orderData = {
       sellerId: auth.currentUser?.uid,
+      sellerName: sellerName,
       agencyId: agency.id,
       agencyName: agency.businessName || 'Unnamed Agency',
       agencyLatitude: agency.latitude || null,
@@ -123,25 +115,21 @@ export default function CreateOrder({ route, navigation }) {
       sellerLongitude,
       minPickupKg: minKg,
       belowMinimum,
-      // Pickup offer fields (only set if below minimum)
-      ...(belowMinimum && {
-        pickupRequested: true,
-        commissionPerKg: finalCommission,
-        totalCommission: finalTotalCommission,
-        sellerNetAmount: finalNetAmount,
-      }),
-      status: belowMinimum ? 'pending_pickup' : 'pending',
+      status: 'pending',
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
 
     try {
-      await addDoc(collection(db, 'orders'), orderData);
+      const docRef = await addDoc(collection(db, 'orders'), orderData);
+      
+      // Send notification to agency
+      const notif = NotificationTemplates.newOrder(sellerName, finalTotalKg);
+      await sendNotification(agency.id, notif.type, notif.message, docRef.id);
+      
       Alert.alert(
-        belowMinimum ? 'Pickup Offer Sent!' : 'Order Sent!',
-        belowMinimum
-          ? `Your pickup offer has been broadcast to nearby agents.\nCommission: ₹${finalCommission}/kg\nYour net payout: ₹${finalNetAmount}`
-          : 'Your order has been sent to the agency.',
+        'Order Sent!',
+        'Your order has been sent to the agency for review.',
         [{ text: 'OK', onPress: () => navigation.navigate('SellerTabs', { screen: 'Orders' }) }]
       );
     } catch (error) {
@@ -215,57 +203,18 @@ export default function CreateOrder({ route, navigation }) {
                 <Text style={styles.summaryValue}>{totalKg} kg</Text>
               </View>
 
-              {/* Below minimum warning + commission input */}
-              {isBelowMin && (
-                <View style={styles.belowMinBox}>
-                  <View style={styles.belowMinHeader}>
-                    <Ionicons name="alert-circle" size={16} color="#fbbf24" />
-                    <Text style={styles.belowMinTitle}>Below Minimum Pickup ({minKg} kg)</Text>
-                  </View>
-                  <Text style={styles.belowMinDesc}>
-                    Set a commission per kg to offer nearby pickup agents. They will collect your scrap and deliver it to the agency. The commission is deducted from your payout.
-                  </Text>
-
-                  <Text style={styles.commissionLabel}>Your Commission Offer (₹ / kg)</Text>
-                  <View style={styles.commissionInputRow}>
-                    <Text style={styles.rupee}>₹</Text>
-                    <TextInput
-                      style={styles.commissionInput}
-                      value={commissionPerKg}
-                      onChangeText={setCommissionPerKg}
-                      keyboardType="numeric"
-                      placeholder="e.g. 5"
-                      placeholderTextColor="#475569"
-                    />
-                    <Text style={styles.perKg}>/ kg</Text>
-                  </View>
-
-                  {commission > 0 && (
-                    <View style={styles.deductionBox}>
-                      <View style={styles.deductionRow}>
-                        <Text style={styles.deductionLabel}>Gross Payout</Text>
-                        <Text style={styles.deductionValue}>₹{estimatedAmount}</Text>
-                      </View>
-                      <View style={styles.deductionRow}>
-                        <Text style={[styles.deductionLabel, { color: '#f87171' }]}>
-                          − Commission (₹{commission} × {totalKg} kg)
-                        </Text>
-                        <Text style={[styles.deductionValue, { color: '#f87171' }]}>₹{totalCommission}</Text>
-                      </View>
-                      <View style={[styles.deductionRow, styles.netRow]}>
-                        <Text style={styles.netLabel}>Your Net Payout</Text>
-                        <Text style={styles.netValue}>₹{sellerNetAmount}</Text>
-                      </View>
-                    </View>
-                  )}
-                </View>
-              )}
-
               {/* Normal payout */}
-              {!isBelowMin && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Estimated Payout</Text>
-                  <Text style={[styles.summaryValue, { color: '#60a5fa' }]}>₹{estimatedAmount}</Text>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Estimated Payout</Text>
+                <Text style={[styles.summaryValue, { color: '#60a5fa' }]}>₹{estimatedAmount}</Text>
+              </View>
+
+              {isBelowMin && (
+                <View style={styles.belowMinWarning}>
+                  <Ionicons name="information-circle" size={16} color="#fbbf24" />
+                  <Text style={styles.belowMinWarningText}>
+                    Below minimum ({minKg} kg). Agency will assign pickup agent after accepting.
+                  </Text>
                 </View>
               )}
             </View>
@@ -281,9 +230,7 @@ export default function CreateOrder({ route, navigation }) {
           >
             {loading
               ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.submitButtonText}>
-                  {isBelowMin ? 'Broadcast Pickup Offer' : 'Send Order Request'}
-                </Text>
+              : <Text style={styles.submitButtonText}>Send Order Request</Text>
             }
           </TouchableOpacity>
         </View>
@@ -318,24 +265,12 @@ const styles = StyleSheet.create({
   summaryLabel: { color: '#cbd5e1', fontSize: 15 },
   summaryValue: { color: '#f1f5f9', fontSize: 15, fontWeight: '600' },
 
-  belowMinBox: { backgroundColor: '#1c1a0f', borderRadius: 12, padding: 14, marginTop: 10, borderWidth: 1, borderColor: '#78350f' },
-  belowMinHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-  belowMinTitle: { color: '#fbbf24', fontSize: 14, fontWeight: '700' },
-  belowMinDesc: { color: '#92400e', fontSize: 12, lineHeight: 18, marginBottom: 14 },
-
-  commissionLabel: { color: '#cbd5e1', fontSize: 13, fontWeight: '600', marginBottom: 8 },
-  commissionInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  rupee: { color: '#f1f5f9', fontSize: 20, fontWeight: '700' },
-  commissionInput: { flex: 1, backgroundColor: '#0f172a', borderRadius: 10, padding: 12, color: '#f1f5f9', fontSize: 18, fontWeight: '700', borderWidth: 1, borderColor: '#334155', textAlign: 'center' },
-  perKg: { color: '#64748b', fontSize: 14 },
-
-  deductionBox: { backgroundColor: '#0f172a', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#334155' },
-  deductionRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  deductionLabel: { color: '#94a3b8', fontSize: 13 },
-  deductionValue: { color: '#94a3b8', fontSize: 13, fontWeight: '600' },
-  netRow: { borderTopWidth: 1, borderTopColor: '#334155', paddingTop: 8, marginTop: 4 },
-  netLabel: { color: '#f1f5f9', fontSize: 15, fontWeight: '700' },
-  netValue: { color: '#4ade80', fontSize: 17, fontWeight: '800' },
+  belowMinWarning: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#1c1a0f', borderRadius: 8, padding: 10,
+    marginTop: 10, borderWidth: 1, borderColor: '#78350f',
+  },
+  belowMinWarningText: { flex: 1, color: '#fbbf24', fontSize: 12 },
 
   bottomContainer: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 20, backgroundColor: '#0f172a', borderTopWidth: 1, borderTopColor: '#334155' },
   submitButton: { backgroundColor: '#2563eb', borderRadius: 14, paddingVertical: 16, alignItems: 'center', elevation: 6 },

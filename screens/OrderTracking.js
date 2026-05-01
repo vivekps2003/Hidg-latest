@@ -7,14 +7,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { db } from '../firebase';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
-const STATUS_STEPS = ['pending', 'accepted', 'picked_up', 'completed'];
+const STATUS_STEPS = ['pending', 'accepted', 'picked_up', 'weight_verified', 'verified', 'paid', 'completed'];
 
 const STATUS_CONFIG = {
-  pending:   { label: 'Awaiting Review', color: '#fbbf24', icon: 'time-outline' },
-  accepted:  { label: 'Accepted',        color: '#34d399', icon: 'checkmark-circle-outline' },
-  picked_up: { label: 'Picked Up',       color: '#60a5fa', icon: 'car-outline' },
-  completed: { label: 'Completed',       color: '#a78bfa', icon: 'ribbon-outline' },
-  rejected:  { label: 'Rejected',        color: '#f87171', icon: 'close-circle-outline' },
+  pending:          { label: 'Awaiting Review',    color: '#fbbf24', icon: 'time-outline' },
+  accepted:         { label: 'Accepted',           color: '#34d399', icon: 'checkmark-circle-outline' },
+  picked_up:        { label: 'Picked Up',          color: '#60a5fa', icon: 'car-outline' },
+  weight_verified:  { label: 'Weight Verified',    color: '#8b5cf6', icon: 'scale-outline' },
+  visit_requested:  { label: 'Visit Requested',    color: '#f59e0b', icon: 'location-outline' },
+  verified:         { label: 'Seller Verified',    color: '#10b981', icon: 'checkmark-done-outline' },
+  paid:             { label: 'Payment Complete',   color: '#06b6d4', icon: 'wallet-outline' },
+  completed:        { label: 'Completed',          color: '#a78bfa', icon: 'ribbon-outline' },
+  rejected:         { label: 'Rejected',           color: '#f87171', icon: 'close-circle-outline' },
 };
 
 export default function OrderTracking({ route, navigation }) {
@@ -25,9 +29,29 @@ export default function OrderTracking({ route, navigation }) {
   const statusCfg = STATUS_CONFIG[currentStatus] || STATUS_CONFIG.pending;
   const currentStep = STATUS_STEPS.indexOf(currentStatus);
 
+  const handleWeightVerification = () => {
+    navigation.navigate('WeightVerificationScreen', { order: { ...order, status: currentStatus } });
+  };
+
+  const handlePayment = () => {
+    navigation.navigate('PaymentScreen', { order: { ...order, status: currentStatus } });
+  };
+
   const advanceStatus = async () => {
     const nextStatus = STATUS_STEPS[currentStep + 1];
     if (!nextStatus) return;
+
+    // Skip to weight verification after picked_up
+    if (currentStatus === 'picked_up') {
+      handleWeightVerification();
+      return;
+    }
+
+    // Skip to payment after verified
+    if (currentStatus === 'verified') {
+      handlePayment();
+      return;
+    }
 
     Alert.alert(
       'Update Status',
@@ -61,6 +85,10 @@ export default function OrderTracking({ route, navigation }) {
 
   const nextStatus = STATUS_STEPS[currentStep + 1];
   const isTerminal = currentStatus === 'completed' || currentStatus === 'rejected';
+  const needsWeightVerification = currentStatus === 'picked_up';
+  const needsPayment = currentStatus === 'verified';
+  const awaitingSellerVerification = currentStatus === 'weight_verified' || currentStatus === 'visit_requested';
+  const awaitingPayment = currentStatus === 'paid';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -137,8 +165,37 @@ export default function OrderTracking({ route, navigation }) {
           </View>
         )}
 
+        {/* Special Action Buttons */}
+        {needsWeightVerification && (
+          <TouchableOpacity style={styles.specialBtn} onPress={handleWeightVerification}>
+            <Ionicons name="scale-outline" size={20} color="#0f172a" />
+            <Text style={styles.advanceBtnText}>Verify Weight</Text>
+          </TouchableOpacity>
+        )}
+
+        {needsPayment && (
+          <TouchableOpacity style={styles.specialBtn} onPress={handlePayment}>
+            <Ionicons name="wallet-outline" size={20} color="#0f172a" />
+            <Text style={styles.advanceBtnText}>Process Payment</Text>
+          </TouchableOpacity>
+        )}
+
+        {awaitingSellerVerification && (
+          <View style={styles.waitingBadge}>
+            <Ionicons name="hourglass-outline" size={18} color="#f59e0b" />
+            <Text style={styles.waitingText}>Awaiting seller verification</Text>
+          </View>
+        )}
+
+        {awaitingPayment && (
+          <View style={styles.waitingBadge}>
+            <Ionicons name="hourglass-outline" size={18} color="#06b6d4" />
+            <Text style={styles.waitingText}>Payment processing...</Text>
+          </View>
+        )}
+
         {/* Advance Status Button */}
-        {!isTerminal && nextStatus && (
+        {!isTerminal && !needsWeightVerification && !needsPayment && !awaitingSellerVerification && !awaitingPayment && nextStatus && (
           <TouchableOpacity
             style={[styles.advanceBtn, loading && { opacity: 0.6 }]}
             onPress={advanceStatus}
@@ -209,7 +266,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, backgroundColor: '#34d399', borderRadius: 14, paddingVertical: 16,
   },
+  specialBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, backgroundColor: '#8b5cf6', borderRadius: 14, paddingVertical: 16,
+  },
   advanceBtnText: { color: '#0f172a', fontSize: 16, fontWeight: '800' },
+  waitingBadge: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, borderRadius: 14, paddingVertical: 16,
+    backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155',
+  },
+  waitingText: { fontSize: 15, fontWeight: '700', color: '#94a3b8' },
   terminalBadge: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 8, borderRadius: 14, paddingVertical: 16,

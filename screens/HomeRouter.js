@@ -50,6 +50,10 @@ export default function HomeRouter({ navigation }) {
             navigation.replace('PickupTabs');
             break;
 
+          case 'admin':
+            navigation.replace('AdminTabs');
+            break;
+
           default:
             // safety fallback
             navigation.replace('Login');

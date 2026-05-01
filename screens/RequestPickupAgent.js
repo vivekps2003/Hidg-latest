@@ -113,13 +113,13 @@ export default function RequestPickupAgent({ route, navigation }) {
                 commissionPerKg: commission,
                 totalCommission,
                 sellerNetAmount: parseFloat((order.estimatedAmount - totalCommission).toFixed(0)),
-                status: 'assigned',
-                assignedAt: serverTimestamp(),
+                status: 'commission_pending',
+                commissionRequestedAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
               });
               Alert.alert(
-                'Assigned!',
-                `${selectedAgent.name} has been assigned. They will receive the pickup request.`,
+                'Commission Sent!',
+                `Commission request sent to seller. Pickup will start after seller accepts the ₹${totalCommission} commission.`,
                 [{ text: 'OK', onPress: () => navigation.goBack() }]
               );
             } catch (e) {

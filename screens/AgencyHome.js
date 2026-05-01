@@ -1,40 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  RefreshControl,
-  Switch,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
+  View, Text, StyleSheet, ScrollView, RefreshControl,
+  Switch, TouchableOpacity, ActivityIndicator, Alert, StatusBar,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from 'firebase/auth';
 import {
-  getFirestore,
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
+  getFirestore, collection, query, where,
+  getDocs, doc, getDoc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
+import { A, AS, AR } from '../agencyTheme';
 
 const AgencyHome = ({ navigation }) => {
   const [agencyData, setAgencyData] = useState(null);
-  const [orders, setOrders] = useState([]);
-  const [summary, setSummary] = useState({
-    totalOrders: 0,
-    activeOrders: 0,
-    completedOrders: 0,
-    totalScrap: 0,
-    totalPayout: 0,
-  });
+  const [summary, setSummary] = useState({ total: 0, active: 0, completed: 0, kg: 0, earnings: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -43,63 +23,26 @@ const AgencyHome = ({ navigation }) => {
   const user = auth.currentUser;
 
   const fetchData = useCallback(async () => {
-    if (!user) {
-      Alert.alert('Error', 'No authenticated user found.');
-      return;
-    }
-
+    if (!user) return;
     try {
-      // Changed from 'agencies' → 'users'
-      const agencyRef = doc(db, 'users', user.uid);
-      const agencySnap = await getDoc(agencyRef);
-
-      if (agencySnap.exists()) {
-        const data = agencySnap.data();
-        // Optional: you could add a safety check here in the future
-        // if (data.entityType !== 'agency') { ... handle mismatch ... }
-        setAgencyData(data);
-      } else {
-        Alert.alert('Not Found', 'Agency profile not found.');
-      }
-
-      const ordersQ = query(
-        collection(db, 'orders'),
-        where('selectedAgencyId', '==', user.uid)
-      );
-      const ordersSnap = await getDocs(ordersQ);
-      const ordersData = ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setOrders(ordersData);
-    } catch (error) {
-      console.error('Dashboard fetch error:', error);
-      Alert.alert('Error', 'Failed to load dashboard data. Please try again.');
-    }
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) setAgencyData(snap.data());
+      const ordSnap = await getDocs(query(collection(db, 'orders'), where('agencyId', '==', user.uid)));
+      const orders = ordSnap.docs.map(d => d.data());
+      const completed = orders.filter(o => o.status === 'completed');
+      const active = orders.filter(o => ['accepted', 'assigned', 'in_progress', 'picked'].includes(o.status));
+      setSummary({
+        total: orders.length, active: active.length, completed: completed.length,
+        kg: completed.reduce((s, o) => s + (Number(o.totalKg) || 0), 0),
+        earnings: completed.reduce((s, o) => s + (Number(o.estimatedAmount) || 0), 0),
+      });
+    } catch (e) { console.error(e); }
   }, [user, db]);
 
   useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      await fetchData();
-      setLoading(false);
-    };
-    load();
+    setLoading(true);
+    fetchData().finally(() => setLoading(false));
   }, [fetchData]);
-
-  useEffect(() => {
-    if (orders.length === 0) return;
-
-    const completed = orders.filter((o) => o.status === 'Completed');
-    const active = orders.filter((o) =>
-      ['Accepted', 'In Progress'].includes(o.status)
-    );
-
-    setSummary({
-      totalOrders: orders.length,
-      activeOrders: active.length,
-      completedOrders: completed.length,
-      totalScrap: completed.reduce((sum, o) => sum + (Number(o.totalKg) || 0), 0),
-      totalPayout: completed.reduce((sum, o) => sum + (Number(o.estimatedTotalPayout) || 0), 0),
-    });
-  }, [orders]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -107,157 +50,138 @@ const AgencyHome = ({ navigation }) => {
     setRefreshing(false);
   }, [fetchData]);
 
-  const toggleActive = async (newValue) => {
-    if (!agencyData || !user) return;
-
+  const toggleActive = async (val) => {
+    if (!user) return;
     try {
-      // Changed from 'agencies' → 'users'
-      const agencyRef = doc(db, 'users', user.uid);
-      await updateDoc(agencyRef, {
-        isActive: newValue,
-        updatedAt: serverTimestamp(),
-      });
-      setAgencyData((prev) => ({ ...prev, isActive: newValue }));
-    } catch (err) {
-      console.error('Toggle active failed:', err);
-      Alert.alert('Error', 'Could not update agency status.');
-    }
+      await updateDoc(doc(db, 'users', user.uid), { isActive: val, updatedAt: serverTimestamp() });
+      setAgencyData(prev => ({ ...prev, isActive: val }));
+    } catch { Alert.alert('Error', 'Could not update status.'); }
   };
 
-  const getKycStyle = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'approved':
-        return { bg: '#4CAF50', text: '#FFFFFF' };
-      case 'pending':
-        return { bg: '#FFC107', text: '#000000' };
-      case 'rejected':
-      case 'not_submitted':
-        return { bg: '#F44336', text: '#FFFFFF' };
-      default:
-        return { bg: '#757575', text: '#FFFFFF' };
-    }
-  };
+  if (loading) return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={A.bg} />
+      <View style={styles.centered}><ActivityIndicator size="large" color={A.primary} /></View>
+    </SafeAreaView>
+  );
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#4CAF50" />
-        </View>
-      </SafeAreaView>
-    );
-  }
+  if (!agencyData) return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.centered}><Text style={styles.errorText}>Agency profile not found</Text></View>
+    </SafeAreaView>
+  );
 
-  if (!agencyData) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.center}>
-          <Text style={styles.errorText}>Agency profile not found</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const kyc = getKycStyle(agencyData.kycStatus);
-  const showKycWarning = agencyData.kycStatus !== 'approved';
-  const showOfflineWarning = !agencyData.isActive;
+  const kycStatus = agencyData.kycStatus || 'not_submitted';
+  const kycApproved = kycStatus === 'approved';
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={A.bg} />
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#4CAF50"
-            colors={['#4CAF50']}
-          />
-        }
+        contentContainerStyle={styles.scroll}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={A.primary} colors={[A.primary]} />}
+        showsVerticalScrollIndicator={false}
       >
-        {/* Warnings */}
-        {showKycWarning && (
-          <View style={[styles.banner, styles.bannerWarning]}>
-            <Ionicons name="alert-circle" size={20} color="#fff" />
-            <Text style={styles.bannerText}>
-              KYC not approved — cannot receive direct orders
-            </Text>
+        {/* Header */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.welcome}>Welcome back,</Text>
+            <Text style={styles.agencyName}>{agencyData.businessName || 'Agency'} 🏢</Text>
+          </View>
+          <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{(agencyData.businessName || 'A').charAt(0).toUpperCase()}</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Banners */}
+        {!kycApproved && (
+          <View style={styles.warningBanner}>
+            <Ionicons name="alert-circle-outline" size={18} color={A.primaryDark} />
+            <Text style={styles.warningText}>KYC not approved — limited order access</Text>
+          </View>
+        )}
+        {!agencyData.isActive && (
+          <View style={styles.offlineBanner}>
+            <Ionicons name="cloud-offline-outline" size={18} color={A.danger} />
+            <Text style={styles.offlineText}>Agency is currently offline</Text>
           </View>
         )}
 
-        {showOfflineWarning && (
-          <View style={[styles.banner, styles.bannerOffline]}>
-            <Ionicons name="cloud-offline" size={20} color="#fff" />
-            <Text style={styles.bannerText}>Agency is currently offline</Text>
+        {/* Earnings Hero */}
+        <View style={styles.earningsCard}>
+          <View style={styles.earningsLeft}>
+            <Text style={styles.earningsLabel}>Total Earnings</Text>
+            <Text style={styles.earningsValue}>₹{summary.earnings.toLocaleString('en-IN')}</Text>
+            <Text style={styles.earningsSub}>{summary.completed} completed · {summary.kg.toFixed(0)} kg processed</Text>
           </View>
-        )}
-
-        {/* Summary Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="grid-outline" size={22} color="#4CAF50" />
-            <Text style={styles.cardTitle}>Dashboard Overview</Text>
-          </View>
-
-          <View style={styles.summaryGrid}>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{summary.totalOrders}</Text>
-              <Text style={styles.summaryLabel}>Total Orders</Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{summary.activeOrders}</Text>
-              <Text style={styles.summaryLabel}>Active</Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{summary.completedOrders}</Text>
-              <Text style={styles.summaryLabel}>Completed</Text>
-            </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{summary.totalScrap.toFixed(0)}</Text>
-              <Text style={styles.summaryLabel}>Total Kg</Text>
-            </View>
-            <View style={[styles.summaryItem, styles.fullWidth]}>
-              <Text style={[styles.summaryValue, { color: '#81C784' }]}>
-                ₹{summary.totalPayout.toLocaleString()}
-              </Text>
-              <Text style={styles.summaryLabel}>Total Earnings</Text>
-            </View>
+          <View style={styles.earningsIconBox}>
+            <Ionicons name="trending-up-outline" size={34} color={A.primaryDark} />
           </View>
         </View>
 
-        {/* Agency Status */}
+        {/* Stats Grid */}
+        <View style={styles.statsGrid}>
+          {[
+            { label: 'Total Orders', value: summary.total,     icon: 'cube-outline',             color: A.primary },
+            { label: 'Active',       value: summary.active,    icon: 'flash-outline',            color: A.info },
+            { label: 'Completed',    value: summary.completed, icon: 'checkmark-circle-outline', color: A.success },
+            { label: 'Total kg',     value: `${summary.kg.toFixed(0)}`, icon: 'scale-outline',   color: A.primaryDark },
+          ].map((s, i) => (
+            <View key={i} style={styles.statCard}>
+              <View style={[styles.statIcon, { backgroundColor: s.color + '18' }]}>
+                <Ionicons name={s.icon} size={20} color={s.color} />
+              </View>
+              <Text style={[styles.statValue, { color: s.color }]}>{s.value}</Text>
+              <Text style={styles.statLabel}>{s.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Status Card */}
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="business-outline" size={22} color="#2196F3" />
+          <View style={styles.cardTitleRow}>
+            <Ionicons name="business-outline" size={18} color={A.primary} />
             <Text style={styles.cardTitle}>Agency Status</Text>
           </View>
 
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>KYC Status</Text>
-            <View style={[styles.badge, { backgroundColor: kyc.bg }]}>
-              <Text style={[styles.badgeText, { color: kyc.text }]}>
-                {(agencyData.kycStatus || 'Unknown').toUpperCase()}
+            <Text style={styles.statusLabel}>KYC Verification</Text>
+            <View style={[styles.kycBadge, {
+              backgroundColor: kycApproved ? A.successLight : A.primaryLight,
+              borderColor: kycApproved ? A.successBorder : A.border,
+            }]}>
+              <Ionicons
+                name={kycApproved ? 'shield-checkmark-outline' : 'time-outline'}
+                size={12}
+                color={kycApproved ? A.success : A.primaryDark}
+              />
+              <Text style={[styles.kycText, { color: kycApproved ? A.success : A.primaryDark }]}>
+                {kycStatus.replace('_', ' ').toUpperCase()}
               </Text>
             </View>
           </View>
 
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Active</Text>
+            <View>
+              <Text style={styles.statusLabel}>Accept Orders</Text>
+              <Text style={styles.statusSub}>{agencyData.isActive ? 'Visible to sellers' : 'Hidden from sellers'}</Text>
+            </View>
             <Switch
               value={agencyData.isActive}
               onValueChange={toggleActive}
-              trackColor={{ false: '#424242', true: '#66BB6A' }}
-              thumbColor={agencyData.isActive ? '#4CAF50' : '#B0BEC5'}
-              ios_backgroundColor="#3e3e3e"
+              trackColor={{ false: '#E5E7EB', true: A.primary + '80' }}
+              thumbColor={agencyData.isActive ? A.primary : '#9CA3AF'}
             />
           </View>
 
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Min Pickup</Text>
+            <Text style={styles.statusLabel}>Min Pickup Weight</Text>
             <Text style={styles.statusValue}>{agencyData.minPickupKg || 0} kg</Text>
           </View>
 
-          <View style={styles.statusRow}>
+          <View style={[styles.statusRow, { borderBottomWidth: 0 }]}>
             <Text style={styles.statusLabel}>Service Radius</Text>
             <Text style={styles.statusValue}>{agencyData.serviceRadiusKm || 0} km</Text>
           </View>
@@ -265,45 +189,31 @@ const AgencyHome = ({ navigation }) => {
 
         {/* Quick Actions */}
         <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="flash-outline" size={22} color="#FFCA28" />
+          <View style={styles.cardTitleRow}>
+            <Ionicons name="flash-outline" size={18} color={A.primary} />
             <Text style={styles.cardTitle}>Quick Actions</Text>
           </View>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('AgencyRates')}
-          >
-            <Ionicons name="pricetag-outline" size={22} color="#FFCA28" />
-            <Text style={styles.actionText}>Manage Rates</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('AgencyOrders')}
-          >
-            <Ionicons name="list-outline" size={22} color="#2196F3" />
-            <Text style={styles.actionText}>View Orders</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <Ionicons name="person-outline" size={22} color="#AB47BC" />
-            <Text style={styles.actionText}>Profile Settings</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Analytics Placeholder */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Ionicons name="trending-up-outline" size={22} color="#29B6F6" />
-            <Text style={styles.cardTitle}>Earnings Analytics</Text>
-          </View>
-          <View style={styles.placeholderContainer}>
-            <Text style={styles.placeholderText}>Interactive chart coming soon...</Text>
-          </View>
+          {[
+            { label: 'Manage Rates',    sub: 'Update buying prices',       icon: 'pricetag-outline', color: A.primary,     screen: 'Rates' },
+            { label: 'View Orders',     sub: 'Accept or reject requests',  icon: 'list-outline',     color: A.info,        screen: 'Orders' },
+            { label: 'Profile Settings',sub: 'Update your information',    icon: 'person-outline',   color: A.primaryDark, screen: 'Profile' },
+          ].map((a, i, arr) => (
+            <TouchableOpacity
+              key={i}
+              style={[styles.actionBtn, i === arr.length - 1 && { borderBottomWidth: 0 }]}
+              onPress={() => navigation.navigate(a.screen)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: a.color + '18' }]}>
+                <Ionicons name={a.icon} size={20} color={a.color} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionLabel}>{a.label}</Text>
+                <Text style={styles.actionSub}>{a.sub}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={A.textMuted} />
+            </TouchableOpacity>
+          ))}
         </View>
 
         <View style={{ height: 40 }} />
@@ -313,143 +223,84 @@ const AgencyHome = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
+  container: { flex: 1, backgroundColor: A.bg },
+  scroll: { padding: 16 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  errorText: { color: A.danger, fontSize: 16 },
+
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  welcome: { fontSize: 13, color: A.textMuted, fontWeight: '500' },
+  agencyName: { fontSize: 22, fontWeight: '800', color: A.textPrimary, marginTop: 2 },
+  avatar: {
+    width: 46, height: 46, borderRadius: 23,
+    backgroundColor: A.primaryLight, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: A.primary,
   },
-  scrollContent: {
-    padding: 16,
+  avatarText: { fontSize: 18, fontWeight: '800', color: A.primaryDark },
+
+  warningBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: A.primaryLight, borderRadius: AR.md, padding: 12,
+    marginBottom: 10, borderWidth: 1, borderColor: A.border,
   },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  warningText: { color: A.primaryDark, fontSize: 13, fontWeight: '600', flex: 1 },
+  offlineBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: A.dangerLight, borderRadius: AR.md, padding: 12,
+    marginBottom: 10, borderWidth: 1, borderColor: A.dangerBorder,
   },
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 12,
-    marginBottom: 16,
-    gap: 12,
+  offlineText: { color: A.danger, fontSize: 13, fontWeight: '600', flex: 1 },
+
+  earningsCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: A.primaryLight, borderRadius: AR.xl, padding: 20,
+    marginBottom: 14, borderWidth: 1.5, borderColor: A.border, ...AS.cardMd,
   },
-  bannerWarning: {
-    backgroundColor: '#C62828',
+  earningsLeft: {},
+  earningsLabel: { fontSize: 11, color: A.primaryDark, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
+  earningsValue: { fontSize: 30, fontWeight: '900', color: A.primaryDark, marginBottom: 4 },
+  earningsSub: { fontSize: 12, color: A.primaryText, opacity: 0.7 },
+  earningsIconBox: {
+    width: 60, height: 60, borderRadius: 30,
+    backgroundColor: A.primary + '25', alignItems: 'center', justifyContent: 'center',
   },
-  bannerOffline: {
-    backgroundColor: '#F57C00',
+
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 },
+  statCard: {
+    flex: 1, minWidth: '45%', backgroundColor: A.surface, borderRadius: AR.lg,
+    padding: 14, alignItems: 'center', borderWidth: 1, borderColor: A.border, ...AS.card,
   },
-  bannerText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-    flex: 1,
-  },
+  statIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  statValue: { fontSize: 22, fontWeight: '800', marginBottom: 2 },
+  statLabel: { fontSize: 12, color: A.textMuted, textAlign: 'center' },
+
   card: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    backgroundColor: A.surface, borderRadius: AR.xl, padding: 16,
+    marginBottom: 14, borderWidth: 1, borderColor: A.border, ...AS.card,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  summaryGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  summaryItem: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: '#252525',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-  },
-  fullWidth: {
-    flexBasis: '100%',
-  },
-  summaryValue: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  summaryLabel: {
-    color: '#B0BEC5',
-    fontSize: 13,
-  },
+  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+  cardTitle: { fontSize: 15, fontWeight: '700', color: A.textPrimary },
+
   statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: A.border,
   },
-  statusLabel: {
-    color: '#E0E0E0',
-    fontSize: 15,
+  statusLabel: { fontSize: 14, color: A.textSecondary, fontWeight: '500' },
+  statusSub: { fontSize: 11, color: A.textMuted, marginTop: 2 },
+  statusValue: { fontSize: 14, fontWeight: '700', color: A.primaryDark },
+  kycBadge: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20, borderWidth: 1,
   },
-  statusValue: {
-    color: '#81C784',
-    fontSize: 15,
-    fontWeight: '500',
+  kycText: { fontSize: 11, fontWeight: '700' },
+
+  actionBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: A.border,
   },
-  badge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  badgeText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#252525',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    gap: 14,
-  },
-  actionText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  placeholderContainer: {
-    height: 140,
-    backgroundColor: '#252525',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderText: {
-    color: '#78909C',
-    fontSize: 15,
-    fontStyle: 'italic',
-  },
-  errorText: {
-    color: '#EF5350',
-    fontSize: 18,
-    textAlign: 'center',
-  },
+  actionIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  actionLabel: { fontSize: 14, fontWeight: '600', color: A.textPrimary },
+  actionSub: { fontSize: 12, color: A.textMuted, marginTop: 1 },
 });
 
 export default AgencyHome;

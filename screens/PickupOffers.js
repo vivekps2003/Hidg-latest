@@ -5,19 +5,15 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
-import {
-  collection, query, where, onSnapshot,
-  doc, updateDoc, serverTimestamp, getDoc,
-} from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { P, PS, PR } from '../pickupTheme';
 
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return null;
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
   const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a = Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
-    Math.sin(dLon / 2) ** 2;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
@@ -29,202 +25,124 @@ export default function PickupOffers({ navigation }) {
   const [acceptingId, setAcceptingId] = useState(null);
   const [fetchTick, setFetchTick] = useState(0);
 
-  // Load agent's location from their profile
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
     getDoc(doc(db, 'users', uid)).then(snap => {
-      if (snap.exists()) {
-        const d = snap.data();
-        if (d.latitude && d.longitude)
-          setAgentLocation({ latitude: d.latitude, longitude: d.longitude });
-      }
+      if (snap.exists()) { const d = snap.data(); if (d.latitude && d.longitude) setAgentLocation({ latitude: d.latitude, longitude: d.longitude }); }
     });
   }, []);
 
-  // Listen for open pickup offers
   useEffect(() => {
-    const q = query(
-      collection(db, 'orders'),
-      where('status', '==', 'pending_pickup'),
-      where('pickupRequested', '==', true)
-    );
-
+    const q = query(collection(db, 'orders'), where('status', '==', 'pending_pickup'), where('pickupRequested', '==', true));
     const unsub = onSnapshot(q, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Sort by distance if agent location available, else by time
-      data.sort((a, b) => {
-        const dA = getDistance(agentLocation?.latitude, agentLocation?.longitude, a.sellerLatitude, a.sellerLongitude) ?? 999;
-        const dB = getDistance(agentLocation?.latitude, agentLocation?.longitude, b.sellerLatitude, b.sellerLongitude) ?? 999;
-        return dA - dB;
-      });
-      setOffers(data);
-      setLoading(false);
-      setRefreshing(false);
-    }, err => {
-      console.error('PickupOffers error:', err.message);
-      setLoading(false);
-      setRefreshing(false);
-    });
-
+      data.sort((a, b) => (getDistance(agentLocation?.latitude, agentLocation?.longitude, a.sellerLatitude, a.sellerLongitude) ?? 999) - (getDistance(agentLocation?.latitude, agentLocation?.longitude, b.sellerLatitude, b.sellerLongitude) ?? 999));
+      setOffers(data); setLoading(false); setRefreshing(false);
+    }, err => { setLoading(false); setRefreshing(false); });
     return () => unsub();
   }, [fetchTick, agentLocation]);
 
   const handleAccept = useCallback(async (offer) => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-
     const dist = getDistance(agentLocation?.latitude, agentLocation?.longitude, offer.sellerLatitude, offer.sellerLongitude);
-    const distStr = dist != null ? ` (${dist.toFixed(1)} km away)` : '';
-
     Alert.alert(
       'Accept Pickup Offer',
-      `Accept this pickup offer?\n\nCommission: ₹${offer.commissionPerKg}/kg × ${offer.totalKg} kg = ₹${offer.totalCommission}\nSeller location${distStr}\n\nYou will collect from seller and deliver to ${offer.agencyName}.`,
+      `Commission: ₹${offer.commissionPerKg}/kg × ${offer.totalKg} kg = ₹${offer.totalCommission}\n${dist != null ? `Distance: ${dist.toFixed(1)} km` : ''}\nDeliver to: ${offer.agencyName}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Accept',
+          text: 'Accept & Earn ₹' + offer.totalCommission,
           onPress: async () => {
             setAcceptingId(offer.id);
             try {
-              // Get agent name
               const agentSnap = await getDoc(doc(db, 'users', uid));
-              const agentName = agentSnap.data()?.name || 'Pickup Agent';
-
-              await updateDoc(doc(db, 'orders', offer.id), {
-                pickupAgentId: uid,
-                pickupAgentName: agentName,
-                status: 'assigned',
-                assignedAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-
-              Alert.alert(
-                'Offer Accepted!',
-                `Go to "My Pickups" to manage this delivery.\n\nCollect from seller and deliver to ${offer.agencyName}.`,
-                [{ text: 'OK' }]
-              );
+              await updateDoc(doc(db, 'orders', offer.id), { pickupAgentId: uid, pickupAgentName: agentSnap.data()?.name || 'Agent', status: 'assigned', assignedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+              Alert.alert('Accepted! 🎉', `Go to "My Pickups" to manage this delivery.`);
             } catch (e) {
-              Alert.alert('Error', e.code === 'permission-denied'
-                ? 'Permission denied. Check Firestore rules.'
-                : 'Could not accept. Try again.');
-            } finally {
-              setAcceptingId(null);
-            }
+              Alert.alert('Error', e.code === 'permission-denied' ? 'Permission denied.' : 'Could not accept. Try again.');
+            } finally { setAcceptingId(null); }
           },
         },
       ]
     );
   }, [agentLocation]);
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={styles.loadingText}>Finding pickup offers...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  if (loading) return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={P.bg} />
+      <View style={styles.centered}><ActivityIndicator size="large" color={P.primary} /><Text style={styles.loadingText}>Finding offers...</Text></View>
+    </SafeAreaView>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor={P.bg} />
 
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Pickup Offers</Text>
-          <Text style={styles.headerSub}>
-            {offers.length > 0 ? `${offers.length} open offer${offers.length > 1 ? 's' : ''} near you` : 'No open offers right now'}
-          </Text>
+          <Text style={styles.headerSub}>{offers.length > 0 ? `${offers.length} open offer${offers.length > 1 ? 's' : ''} near you` : 'No open offers right now'}</Text>
         </View>
-        {offers.length > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{offers.length}</Text>
-          </View>
-        )}
+        {offers.length > 0 && <View style={styles.badge}><Text style={styles.badgeText}>{offers.length}</Text></View>}
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); setFetchTick(t => t + 1); }}
-            tintColor="#2563eb"
-          />
-        }
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setFetchTick(t => t + 1); }} tintColor={P.primary} colors={[P.primary]} />}
       >
         {offers.length === 0 ? (
           <View style={styles.emptyBox}>
-            <Ionicons name="cube-outline" size={56} color="#334155" />
+            <View style={styles.emptyIcon}><Ionicons name="pricetag-outline" size={36} color={P.textMuted} /></View>
             <Text style={styles.emptyTitle}>No Pickup Offers</Text>
-            <Text style={styles.emptySubtitle}>
-              When sellers post below-minimum orders with a commission offer, they'll appear here.
-            </Text>
+            <Text style={styles.emptySub}>When sellers post below-minimum orders with a commission, they'll appear here.</Text>
           </View>
         ) : (
           offers.map(offer => {
-            const dist = getDistance(
-              agentLocation?.latitude, agentLocation?.longitude,
-              offer.sellerLatitude, offer.sellerLongitude
-            );
-            const timeStr = offer.createdAt?.toDate?.()?.toLocaleString('en-IN', {
-              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-            }) ?? 'Just now';
+            const dist = getDistance(agentLocation?.latitude, agentLocation?.longitude, offer.sellerLatitude, offer.sellerLongitude);
+            const timeStr = offer.createdAt?.toDate?.()?.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) ?? 'Just now';
             const isAccepting = acceptingId === offer.id;
 
             return (
               <View key={offer.id} style={styles.card}>
-
                 {/* Header */}
                 <View style={styles.cardTop}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardLabel}>Pickup Offer</Text>
                     <Text style={styles.cardId}>#{offer.id.slice(-6).toUpperCase()}</Text>
                   </View>
-                  <View style={styles.commissionBadge}>
-                    <Ionicons name="cash-outline" size={12} color="#4ade80" />
-                    <Text style={styles.commissionBadgeText}>₹{offer.commissionPerKg}/kg</Text>
+                  <View style={styles.commBadge}>
+                    <Ionicons name="cash-outline" size={12} color={P.primaryDark} />
+                    <Text style={styles.commBadgeText}>₹{offer.commissionPerKg}/kg</Text>
                   </View>
                 </View>
 
-                {/* Agency + Time */}
-                <View style={styles.metaRow}>
-                  <Ionicons name="business-outline" size={13} color="#64748b" />
-                  <Text style={styles.metaText}>Deliver to: {offer.agencyName}</Text>
-                </View>
-                <View style={styles.metaRow}>
-                  <Ionicons name="calendar-outline" size={13} color="#64748b" />
-                  <Text style={styles.metaText}>{timeStr}</Text>
-                </View>
+                <View style={styles.metaRow}><Ionicons name="business-outline" size={13} color={P.textMuted} /><Text style={styles.metaText}>Deliver to: {offer.agencyName}</Text></View>
+                <View style={styles.metaRow}><Ionicons name="calendar-outline" size={13} color={P.textMuted} /><Text style={styles.metaText}>{timeStr}</Text></View>
 
                 <View style={styles.divider} />
 
-                {/* Stats */}
-                <View style={styles.statsRow}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Weight</Text>
-                    <Text style={styles.statValue}>{offer.totalKg} kg</Text>
+                {/* Earning highlight */}
+                <View style={styles.earningRow}>
+                  <View style={styles.earningItem}>
+                    <Text style={styles.earningLabel}>Your Earning</Text>
+                    <Text style={styles.earningValue}>₹{offer.totalCommission}</Text>
                   </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Your Earning</Text>
-                    <Text style={[styles.statValue, { color: '#4ade80' }]}>₹{offer.totalCommission}</Text>
+                  <View style={styles.earningDivider} />
+                  <View style={styles.earningItem}>
+                    <Text style={styles.earningLabel}>Weight</Text>
+                    <Text style={styles.earningValue}>{offer.totalKg} kg</Text>
                   </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Distance</Text>
-                    <Text style={styles.statValue}>
-                      {dist != null ? `${dist.toFixed(1)} km` : '—'}
-                    </Text>
+                  <View style={styles.earningDivider} />
+                  <View style={styles.earningItem}>
+                    <Text style={styles.earningLabel}>Distance</Text>
+                    <Text style={styles.earningValue}>{dist != null ? `${dist.toFixed(1)} km` : '—'}</Text>
                   </View>
                 </View>
 
                 {/* Materials */}
-                <View style={styles.materialsBox}>
+                <View style={styles.matsBox}>
                   {(offer.materials || []).map((mat, i) => (
                     <View key={i} style={styles.matRow}>
                       <View style={styles.matDot} />
@@ -234,36 +152,18 @@ export default function PickupOffers({ navigation }) {
                   ))}
                 </View>
 
-                {/* Location */}
                 {offer.sellerLatitude && (
-                  <TouchableOpacity
-                    style={styles.locationChip}
-                    onPress={() => navigation.navigate('PickupMapScreen', { order: offer })}
-                  >
-                    <Ionicons name="navigate-circle-outline" size={14} color="#34d399" />
-                    <Text style={styles.locationText}>
-                      {offer.sellerLatitude.toFixed(4)}, {offer.sellerLongitude.toFixed(4)}
-                    </Text>
-                    <Ionicons name="map-outline" size={13} color="#34d399" />
-                    <Text style={styles.locationText}>View Map</Text>
+                  <TouchableOpacity style={styles.locationChip} onPress={() => navigation.navigate('PickupMapScreen', { order: offer })}>
+                    <Ionicons name="location-outline" size={13} color={P.primary} />
+                    <Text style={styles.locationText}>{offer.sellerLatitude.toFixed(4)}, {offer.sellerLongitude.toFixed(4)}</Text>
+                    <Text style={[styles.locationText, { fontWeight: '700' }]}>View Map →</Text>
                   </TouchableOpacity>
                 )}
 
-                {/* Accept Button */}
-                <TouchableOpacity
-                  style={[styles.acceptBtn, isAccepting && { opacity: 0.6 }]}
-                  onPress={() => handleAccept(offer)}
-                  disabled={isAccepting}
-                >
-                  {isAccepting
-                    ? <ActivityIndicator color="#0f172a" />
-                    : (
-                      <>
-                        <Ionicons name="checkmark-circle-outline" size={20} color="#0f172a" />
-                        <Text style={styles.acceptBtnText}>Accept — Earn ₹{offer.totalCommission}</Text>
-                      </>
-                    )
-                  }
+                <TouchableOpacity style={[styles.acceptBtn, isAccepting && { opacity: 0.6 }]} onPress={() => handleAccept(offer)} disabled={isAccepting}>
+                  {isAccepting ? <ActivityIndicator color="#fff" /> : (
+                    <><Ionicons name="checkmark-circle-outline" size={20} color="#fff" /><Text style={styles.acceptBtnText}>Accept — Earn ₹{offer.totalCommission}</Text></>
+                  )}
                 </TouchableOpacity>
               </View>
             );
@@ -275,65 +175,48 @@ export default function PickupOffers({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
+  container: { flex: 1, backgroundColor: P.bg },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { color: '#64748b', fontSize: 15 },
+  loadingText: { color: P.textMuted, fontSize: 15 },
 
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
-  },
-  headerTitle: { color: '#f1f5f9', fontSize: 24, fontWeight: '800' },
-  headerSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
-  badge: {
-    backgroundColor: '#4ade80', borderRadius: 20, minWidth: 32, height: 32,
-    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10,
-  },
-  badgeText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: P.surface, borderBottomWidth: 1, borderBottomColor: P.border },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: P.textPrimary },
+  headerSub: { fontSize: 13, color: P.textMuted, marginTop: 2 },
+  badge: { backgroundColor: P.primary, borderRadius: 20, minWidth: 32, height: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  badgeText: { color: '#fff', fontSize: 14, fontWeight: '800' },
 
-  listContent: { padding: 16, paddingBottom: 40, gap: 16 },
+  list: { padding: 16, gap: 14, paddingBottom: 40 },
+  emptyBox: { alignItems: 'center', paddingTop: 60, gap: 10 },
+  emptyIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: P.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: P.textPrimary },
+  emptySub: { fontSize: 14, color: P.textMuted, textAlign: 'center', paddingHorizontal: 40 },
 
-  emptyBox: { alignItems: 'center', paddingTop: 80, gap: 12 },
-  emptyTitle: { color: '#cbd5e1', fontSize: 20, fontWeight: '700' },
-  emptySubtitle: { color: '#64748b', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
-
-  card: { backgroundColor: '#1e293b', borderRadius: 18, padding: 18, borderWidth: 1, borderColor: '#334155' },
+  card: { backgroundColor: P.surface, borderRadius: PR.xl, padding: 16, borderWidth: 1, borderColor: P.border, ...PS.card },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
-  cardLabel: { color: '#64748b', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 },
-  cardId: { color: '#f1f5f9', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  commissionBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#0a1f0a', borderRadius: 20, paddingHorizontal: 10,
-    paddingVertical: 5, borderWidth: 1, borderColor: '#166534',
-  },
-  commissionBadgeText: { color: '#4ade80', fontSize: 12, fontWeight: '700' },
+  cardLabel: { fontSize: 11, color: P.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6 },
+  cardId: { fontSize: 20, fontWeight: '800', color: P.textPrimary, marginTop: 2 },
+  commBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: P.primaryLight, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderColor: P.border },
+  commBadgeText: { color: P.primaryDark, fontSize: 12, fontWeight: '700' },
 
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 },
-  metaText: { color: '#64748b', fontSize: 12 },
-  divider: { height: 1, backgroundColor: '#334155', marginVertical: 12 },
+  metaText: { color: P.textMuted, fontSize: 12 },
+  divider: { height: 1, backgroundColor: P.border, marginVertical: 12 },
 
-  statsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', marginBottom: 12 },
-  statItem: { alignItems: 'center', flex: 1 },
-  statLabel: { color: '#64748b', fontSize: 11, marginBottom: 4 },
-  statValue: { color: '#f1f5f9', fontSize: 16, fontWeight: '700' },
-  statDivider: { width: 1, height: 30, backgroundColor: '#334155' },
+  earningRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: P.primaryLight, borderRadius: PR.md, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: P.border },
+  earningItem: { flex: 1, alignItems: 'center' },
+  earningLabel: { fontSize: 11, color: P.primaryDark, marginBottom: 3, fontWeight: '600' },
+  earningValue: { fontSize: 16, fontWeight: '800', color: P.primaryDark },
+  earningDivider: { width: 1, height: 30, backgroundColor: P.border },
 
-  materialsBox: { backgroundColor: '#0f172a', borderRadius: 10, padding: 10, marginBottom: 10, gap: 6 },
+  matsBox: { backgroundColor: P.surfaceAlt, borderRadius: PR.md, padding: 10, marginBottom: 10, gap: 6 },
   matRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  matDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#2563eb' },
-  matName: { color: '#cbd5e1', fontSize: 13, flex: 1 },
-  matQty: { color: '#94a3b8', fontSize: 13 },
+  matDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: P.primary },
+  matName: { flex: 1, fontSize: 13, color: P.textSecondary },
+  matQty: { fontSize: 13, color: P.textMuted },
 
-  locationChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#0a1f17', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 6, marginBottom: 12, borderWidth: 1, borderColor: '#134e35',
-  },
-  locationText: { color: '#34d399', fontSize: 11, flex: 1 },
+  locationChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: P.primaryLight, borderRadius: PR.sm, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 10, borderWidth: 1, borderColor: P.border },
+  locationText: { color: P.primaryDark, fontSize: 11, flex: 1 },
 
-  acceptBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 8, backgroundColor: '#4ade80', borderRadius: 14, paddingVertical: 15,
-  },
-  acceptBtnText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+  acceptBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: P.primary, borderRadius: PR.lg, paddingVertical: 14, ...PS.btn },
+  acceptBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });

@@ -6,25 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
-import {
-  collection, query, where, onSnapshot,
-  doc, updateDoc, serverTimestamp, orderBy,
-} from 'firebase/firestore';
-
-const STATUS_CONFIG = {
-  assigned:    { label: 'Assigned',    color: '#fbbf24', bg: '#1c1a0f', icon: 'person-outline' },
-  accepted:    { label: 'Accepted',    color: '#60a5fa', bg: '#0a1020', icon: 'checkmark-circle-outline' },
-  in_progress: { label: 'In Progress', color: '#a78bfa', bg: '#130a1f', icon: 'car-outline' },
-  picked:      { label: 'Picked Up',   color: '#34d399', bg: '#0a1f17', icon: 'cube-outline' },
-  completed:   { label: 'Completed',   color: '#4ade80', bg: '#0a1f0a', icon: 'ribbon-outline' },
-};
-
-const NEXT_ACTION = {
-  assigned:    { label: 'Accept Pickup',   next: 'accepted',    color: '#60a5fa' },
-  accepted:    { label: 'Start Trip',      next: 'in_progress', color: '#a78bfa' },
-  in_progress: { label: 'Mark Picked Up',  next: 'picked',      color: '#34d399' },
-  picked:      { label: 'Complete Order',  next: 'completed',   color: '#4ade80' },
-};
+import { collection, query, where, onSnapshot, doc, updateDoc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { P, PS, PR, STATUS, NEXT_ACTION } from '../pickupTheme';
+import NotificationBell from '../components/NotificationBell';
 
 const FILTER_TABS = ['All', 'Assigned', 'Active', 'Completed'];
 
@@ -39,62 +23,39 @@ export default function PickupOrders({ navigation }) {
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) { setLoading(false); return; }
-
-    const q = query(
-      collection(db, 'orders'),
-      where('pickupAgentId', '==', uid),
-      orderBy('createdAt', 'desc')
-    );
-
+    const q = query(collection(db, 'orders'), where('pickupAgentId', '==', uid), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, snap => {
       setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-      setRefreshing(false);
-    }, err => {
-      console.error('PickupOrders error:', err.code, err.message);
-      Alert.alert('Error', err.message);
-      setLoading(false);
-      setRefreshing(false);
-    });
-
+      setLoading(false); setRefreshing(false);
+    }, err => { Alert.alert('Error', err.message); setLoading(false); setRefreshing(false); });
     return () => unsub();
   }, [fetchTick]);
 
   const handleAction = useCallback(async (order) => {
     const action = NEXT_ACTION[order.status];
     if (!action) return;
-
-    Alert.alert(
-      action.label,
-      `Confirm: "${action.label}" for order #${order.id.slice(-6).toUpperCase()}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          onPress: async () => {
-            setActionLoading(order.id);
-            try {
-              await updateDoc(doc(db, 'orders', order.id), {
-                status: action.next,
-                updatedAt: serverTimestamp(),
-                ...(action.next === 'in_progress' && { tripStartedAt: serverTimestamp() }),
-                ...(action.next === 'picked'      && { pickedUpAt: serverTimestamp() }),
-                ...(action.next === 'completed'   && { completedAt: serverTimestamp() }),
-              });
-            } catch (e) {
-              Alert.alert('Error', e.code === 'permission-denied'
-                ? 'Permission denied. Check Firestore rules.'
-                : 'Could not update. Try again.');
-            } finally {
-              setActionLoading(null);
-            }
-          },
+    Alert.alert(action.label, `Confirm "${action.label}" for order #${order.id.slice(-6).toUpperCase()}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Confirm',
+        onPress: async () => {
+          setActionLoading(order.id);
+          try {
+            await updateDoc(doc(db, 'orders', order.id), {
+              status: action.next, updatedAt: serverTimestamp(),
+              ...(action.next === 'in_progress' && { tripStartedAt: serverTimestamp() }),
+              ...(action.next === 'picked' && { pickedUpAt: serverTimestamp() }),
+              ...(action.next === 'completed' && { completedAt: serverTimestamp() }),
+            });
+          } catch (e) {
+            Alert.alert('Error', e.code === 'permission-denied' ? 'Permission denied.' : 'Could not update. Try again.');
+          } finally { setActionLoading(null); }
         },
-      ]
-    );
+      },
+    ]);
   }, []);
 
-  const filteredOrders = orders.filter(o => {
+  const filtered = orders.filter(o => {
     if (activeFilter === 'All') return true;
     if (activeFilter === 'Assigned') return o.status === 'assigned';
     if (activeFilter === 'Active') return ['accepted', 'in_progress', 'picked'].includes(o.status);
@@ -104,161 +65,111 @@ export default function PickupOrders({ navigation }) {
 
   const assignedCount = orders.filter(o => o.status === 'assigned').length;
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#2563eb" />
-          <Text style={styles.loadingText}>Loading orders...</Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  if (loading) return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={P.bg} />
+      <View style={styles.centered}><ActivityIndicator size="large" color={P.primary} /><Text style={styles.loadingText}>Loading...</Text></View>
+    </SafeAreaView>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor={P.bg} />
 
-      {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Pickup Orders</Text>
-          <Text style={styles.headerSub}>
-            {assignedCount > 0 ? `${assignedCount} new assignment${assignedCount > 1 ? 's' : ''}` : 'All caught up'}
-          </Text>
+          <Text style={styles.headerTitle}>My Pickups</Text>
+          <Text style={styles.headerSub}>{assignedCount > 0 ? `${assignedCount} new assignment${assignedCount > 1 ? 's' : ''}` : 'All caught up ✓'}</Text>
         </View>
-        {assignedCount > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{assignedCount}</Text>
-          </View>
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          {assignedCount > 0 && (
+            <View style={styles.badge}><Text style={styles.badgeText}>{assignedCount}</Text></View>
+          )}
+          <NotificationBell navigation={navigation} iconColor={P.textPrimary} iconSize={22} />
+        </View>
       </View>
 
-      {/* Filter Tabs */}
-      <ScrollView
-        horizontal showsHorizontalScrollIndicator={false}
-        style={styles.filterRow}
-        contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
-      >
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
         {FILTER_TABS.map(tab => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.filterTab, activeFilter === tab && styles.filterTabActive]}
-            onPress={() => setActiveFilter(tab)}
-          >
-            <Text style={[styles.filterTabText, activeFilter === tab && styles.filterTabTextActive]}>
-              {tab}
-            </Text>
+          <TouchableOpacity key={tab} style={[styles.filterTab, activeFilter === tab && styles.filterTabActive]} onPress={() => setActiveFilter(tab)}>
+            <Text style={[styles.filterTabText, activeFilter === tab && styles.filterTabTextActive]}>{tab}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
 
-      {/* List */}
       <ScrollView
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => { setRefreshing(true); setFetchTick(t => t + 1); }}
-            tintColor="#2563eb"
-          />
-        }
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); setFetchTick(t => t + 1); }} tintColor={P.primary} colors={[P.primary]} />}
       >
-        {filteredOrders.length === 0 ? (
-          <View style={styles.centered}>
-            <Ionicons name="cube-outline" size={56} color="#334155" />
+        {filtered.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <View style={styles.emptyIcon}><Ionicons name="cube-outline" size={36} color={P.textMuted} /></View>
             <Text style={styles.emptyTitle}>No {activeFilter === 'All' ? '' : activeFilter} Orders</Text>
-            <Text style={styles.emptySubtitle}>New assignments will appear here automatically.</Text>
+            <Text style={styles.emptySub}>New assignments will appear here automatically.</Text>
           </View>
         ) : (
-          filteredOrders.map(order => {
-            const cfg = STATUS_CONFIG[order.status] || STATUS_CONFIG.assigned;
+          filtered.map(order => {
+            const st = STATUS[order.status] || STATUS.assigned;
             const action = NEXT_ACTION[order.status];
             const isActing = actionLoading === order.id;
-            const timeStr = order.createdAt?.toDate?.()?.toLocaleString('en-IN', {
-              day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-            }) ?? 'Just now';
+            const timeStr = order.createdAt?.toDate?.()?.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) ?? 'Just now';
 
             return (
-              <TouchableOpacity
-                key={order.id}
-                style={styles.card}
-                onPress={() => navigation.navigate('PickupOrderDetails', { order })}
-                activeOpacity={0.85}
-              >
-                {/* Card Header */}
+              <TouchableOpacity key={order.id} style={styles.card} onPress={() => navigation.navigate('PickupOrderDetails', { order })} activeOpacity={0.85}>
                 <View style={styles.cardTop}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.cardLabel}>Pickup Assignment</Text>
                     <Text style={styles.cardId}>#{order.id.slice(-6).toUpperCase()}</Text>
                   </View>
-                  <View style={[styles.statusBadge, { backgroundColor: cfg.bg, borderColor: cfg.color }]}>
-                    <Ionicons name={cfg.icon} size={12} color={cfg.color} />
-                    <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
+                  <View style={[styles.statusBadge, { backgroundColor: st.bg, borderColor: st.border }]}>
+                    <Ionicons name={st.icon} size={12} color={st.color} />
+                    <Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text>
                   </View>
                 </View>
 
-                {/* Agency */}
                 <View style={styles.metaRow}>
-                  <Ionicons name="business-outline" size={13} color="#64748b" />
+                  <Ionicons name="business-outline" size={13} color={P.textMuted} />
                   <Text style={styles.metaText}>{order.agencyName || 'Agency'}</Text>
-                  <Ionicons name="calendar-outline" size={13} color="#64748b" style={{ marginLeft: 12 }} />
+                  <Ionicons name="calendar-outline" size={13} color={P.textMuted} style={{ marginLeft: 10 }} />
                   <Text style={styles.metaText}>{timeStr}</Text>
                 </View>
 
                 <View style={styles.divider} />
 
-                {/* Stats */}
                 <View style={styles.statsRow}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Weight</Text>
-                    <Text style={styles.statValue}>{order.totalKg} kg</Text>
-                  </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Payout</Text>
-                    <Text style={[styles.statValue, { color: '#60a5fa' }]}>₹{order.estimatedAmount}</Text>
-                  </View>
-                  <View style={styles.statDivider} />
-                  <View style={styles.statItem}>
-                    <Text style={styles.statLabel}>Items</Text>
-                    <Text style={styles.statValue}>{order.materials?.length ?? 0}</Text>
-                  </View>
+                  {[
+                    { label: 'Weight', value: `${order.totalKg} kg` },
+                    { label: 'Commission', value: `₹${order.totalCommission || order.estimatedAmount}`, color: P.primary },
+                    { label: 'Items', value: `${order.materials?.length ?? 0}` },
+                  ].map((s, i, arr) => (
+                    <React.Fragment key={i}>
+                      <View style={styles.statItem}>
+                        <Text style={styles.statLabel}>{s.label}</Text>
+                        <Text style={[styles.statValue, s.color && { color: s.color }]}>{s.value}</Text>
+                      </View>
+                      {i < arr.length - 1 && <View style={styles.statDivider} />}
+                    </React.Fragment>
+                  ))}
                 </View>
 
-                {/* Location chip */}
                 {order.sellerLatitude && (
-                  <TouchableOpacity
-                    style={styles.locationChip}
-                    onPress={() => navigation.navigate('PickupMapScreen', { order })}
-                  >
-                    <Ionicons name="navigate-circle-outline" size={14} color="#34d399" />
-                    <Text style={styles.locationText}>
-                      {order.sellerLatitude.toFixed(4)}, {order.sellerLongitude.toFixed(4)}
-                    </Text>
-                    <Ionicons name="map-outline" size={13} color="#34d399" />
-                    <Text style={styles.locationText}>View Map</Text>
+                  <TouchableOpacity style={styles.locationChip} onPress={() => navigation.navigate('PickupMapScreen', { order })}>
+                    <Ionicons name="location-outline" size={13} color={P.primary} />
+                    <Text style={styles.locationText}>{order.sellerLatitude.toFixed(4)}, {order.sellerLongitude.toFixed(4)}</Text>
+                    <Ionicons name="map-outline" size={13} color={P.primary} />
+                    <Text style={[styles.locationText, { fontWeight: '600' }]}>View Map</Text>
                   </TouchableOpacity>
                 )}
 
-                {/* Action Button */}
                 {action && (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, { backgroundColor: action.color }, isActing && { opacity: 0.6 }]}
-                    onPress={() => handleAction(order)}
-                    disabled={isActing}
-                  >
-                    {isActing
-                      ? <ActivityIndicator size="small" color="#0f172a" />
-                      : <Text style={styles.actionBtnText}>{action.label}</Text>
-                    }
+                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: action.color }, isActing && { opacity: 0.6 }]} onPress={() => handleAction(order)} disabled={isActing}>
+                    {isActing ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.actionBtnText}>{action.label}</Text>}
                   </TouchableOpacity>
                 )}
 
                 {order.status === 'completed' && (
                   <View style={styles.completedRow}>
-                    <Ionicons name="checkmark-circle" size={16} color="#4ade80" />
+                    <Ionicons name="checkmark-circle" size={16} color={P.primary} />
                     <Text style={styles.completedText}>Order Completed</Text>
                   </View>
                 )}
@@ -272,75 +183,55 @@ export default function PickupOrders({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, paddingTop: 80 },
-  loadingText: { color: '#64748b', fontSize: 15 },
-  emptyTitle: { color: '#cbd5e1', fontSize: 20, fontWeight: '700' },
-  emptySubtitle: { color: '#64748b', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+  container: { flex: 1, backgroundColor: P.bg },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { color: P.textMuted, fontSize: 15 },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
+    backgroundColor: P.surface, borderBottomWidth: 1, borderBottomColor: P.border,
   },
-  headerTitle: { color: '#f1f5f9', fontSize: 24, fontWeight: '800' },
-  headerSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
-  badge: {
-    backgroundColor: '#fbbf24', borderRadius: 20, minWidth: 32, height: 32,
-    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10,
-  },
-  badgeText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: P.textPrimary },
+  headerSub: { fontSize: 13, color: P.textMuted, marginTop: 2 },
+  badge: { backgroundColor: P.primary, borderRadius: 20, minWidth: 32, height: 32, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  badgeText: { color: '#fff', fontSize: 14, fontWeight: '800' },
 
-  filterRow: { maxHeight: 52, marginBottom: 4 },
-  filterTab: {
-    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-    backgroundColor: '#1e293b', borderWidth: 1, borderColor: '#334155',
-  },
-  filterTabActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  filterTabText: { color: '#94a3b8', fontSize: 13, fontWeight: '600' },
+  filterRow: { maxHeight: 52, backgroundColor: P.surface, borderBottomWidth: 1, borderBottomColor: P.border },
+  filterTab: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginVertical: 8, backgroundColor: P.surfaceAlt, borderWidth: 1, borderColor: P.border },
+  filterTabActive: { backgroundColor: P.primary, borderColor: P.primary },
+  filterTabText: { color: P.textSecondary, fontSize: 13, fontWeight: '600' },
   filterTabTextActive: { color: '#fff' },
 
-  listContent: { padding: 16, paddingBottom: 40, gap: 16 },
+  list: { padding: 16, gap: 14, paddingBottom: 40 },
+  emptyBox: { alignItems: 'center', paddingTop: 60, gap: 10 },
+  emptyIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: P.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: P.textPrimary },
+  emptySub: { fontSize: 14, color: P.textMuted, textAlign: 'center', paddingHorizontal: 40 },
 
-  card: {
-    backgroundColor: '#1e293b', borderRadius: 18, padding: 18,
-    borderWidth: 1, borderColor: '#334155',
-  },
+  card: { backgroundColor: P.surface, borderRadius: PR.xl, padding: 16, borderWidth: 1, borderColor: P.border, ...PS.card },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
-  cardLabel: { color: '#64748b', fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.8 },
-  cardId: { color: '#f1f5f9', fontSize: 20, fontWeight: '800', marginTop: 2 },
-  statusBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1,
-  },
+  cardLabel: { fontSize: 11, color: P.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6 },
+  cardId: { fontSize: 20, fontWeight: '800', color: P.textPrimary, marginTop: 2 },
+  statusBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1 },
   statusText: { fontSize: 11, fontWeight: '700' },
 
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 12 },
-  metaText: { color: '#64748b', fontSize: 12 },
-
-  divider: { height: 1, backgroundColor: '#334155', marginBottom: 12 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 10 },
+  metaText: { color: P.textMuted, fontSize: 12 },
+  divider: { height: 1, backgroundColor: P.border, marginBottom: 12 },
 
   statsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', marginBottom: 12 },
   statItem: { alignItems: 'center', flex: 1 },
-  statLabel: { color: '#64748b', fontSize: 12, marginBottom: 4 },
-  statValue: { color: '#f1f5f9', fontSize: 17, fontWeight: '700' },
-  statDivider: { width: 1, height: 32, backgroundColor: '#334155' },
+  statLabel: { color: P.textMuted, fontSize: 11, marginBottom: 4 },
+  statValue: { color: P.textPrimary, fontSize: 16, fontWeight: '700' },
+  statDivider: { width: 1, height: 30, backgroundColor: P.border },
 
-  locationChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#0a1f17', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 6, marginBottom: 12, borderWidth: 1, borderColor: '#134e35',
-  },
-  locationText: { color: '#34d399', fontSize: 11, flex: 1 },
+  locationChip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: P.primaryLight, borderRadius: PR.sm, paddingHorizontal: 10, paddingVertical: 7, marginBottom: 10, borderWidth: 1, borderColor: P.border },
+  locationText: { color: P.primaryDark, fontSize: 11, flex: 1 },
 
-  actionBtn: {
-    alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 14, borderRadius: 12,
-  },
-  actionBtnText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+  actionBtn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 13, borderRadius: PR.md, ...PS.btn },
+  actionBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 
-  completedRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 10,
-  },
-  completedText: { color: '#4ade80', fontSize: 14, fontWeight: '700' },
+  completedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, backgroundColor: P.primaryLight, borderRadius: PR.md, borderWidth: 1, borderColor: P.border },
+  completedText: { color: P.primaryDark, fontSize: 14, fontWeight: '700' },
 });

@@ -1,21 +1,44 @@
 import { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  ActivityIndicator,
-  StyleSheet,
+  View, Text, TextInput, TouchableOpacity, Alert,
+  KeyboardAvoidingView, Platform, ScrollView,
+  ActivityIndicator, StyleSheet, StatusBar,
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
+import { Ionicons } from '@expo/vector-icons';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import * as Location from 'expo-location';
+import { C, S, R } from '../theme';
+
+const BUSINESS_TYPES = ['Select Type','Mall','Supermarket','Hospital','Industry / Factory','Hotel / Restaurant','Shop / Retail Store','Other'];
+const SCRAP_TYPES = ['Select Type','Metal Scrap Dealer (Iron/Steel)','Non-Ferrous Metal Dealer (Copper/Aluminium/Brass)','E-Waste / Electronic Scrap','Plastic Scrap Dealer','Paper / Cardboard Scrap','Vehicle / Automobile Scrap','Construction & Demolition Waste','General Waste Collector','Recycling Agency / Processor','Other'];
+const ENTITY_OPTIONS = [
+  { label: 'Individual', value: 'individual', icon: 'person-outline' },
+  { label: 'Shop / Retail', value: 'shop', icon: 'storefront-outline' },
+  { label: 'Mall', value: 'mall', icon: 'business-outline' },
+  { label: 'Supermarket', value: 'supermarket', icon: 'cart-outline' },
+  { label: 'Industry', value: 'industry', icon: 'construct-outline' },
+  { label: 'Scrap Center', value: 'scrap_center', icon: 'layers-outline' },
+  { label: 'Agency', value: 'agency', icon: 'briefcase-outline' },
+  { label: 'Pickup Partner', value: 'pickup_agent', icon: 'bicycle-outline' },
+];
+
+const getCapabilities = (type) => {
+  switch (type) {
+    case 'individual': case 'shop': case 'mall': case 'supermarket': case 'industry':
+      return { canSell: true, canBuy: false, canRequestPickup: true, canOfferPickup: false };
+    case 'scrap_center':
+      return { canSell: true, canBuy: true, canRequestPickup: false, canOfferPickup: true };
+    case 'agency':
+      return { canSell: false, canBuy: true, canRequestPickup: false, canOfferPickup: true };
+    case 'pickup_agent':
+      return { canSell: false, canBuy: false, canRequestPickup: false, canOfferPickup: true };
+    default:
+      return { canSell: false, canBuy: false, canRequestPickup: false, canOfferPickup: false };
+  }
+};
 
 export default function RegisterScreen({ navigation }) {
   const [name, setName] = useState('');
@@ -23,6 +46,7 @@ export default function RegisterScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [entityType, setEntityType] = useState('individual');
   const [businessName, setBusinessName] = useState('');
   const [gstNumber, setGstNumber] = useState('');
@@ -30,723 +54,417 @@ export default function RegisterScreen({ navigation }) {
   const [location, setLocation] = useState('');
   const [businessCategory, setBusinessCategory] = useState('Select Type');
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState(null);
+  const [logoTaps, setLogoTaps] = useState(0);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
 
-  const BUSINESS_TYPES = [
-    'Select Type',
-    'Mall',
-    'Supermarket',
-    'Hospital',
-    'Industry / Factory',
-    'Hotel / Restaurant',
-    'Shop / Retail Store',
-    'Other',
-  ];
-
-  const SCRAP_TYPES = [
-    'Select Type',
-    'Metal Scrap Dealer (Iron/Steel)',
-    'Non-Ferrous Metal Dealer (Copper/Aluminium/Brass)',
-    'E-Waste / Electronic Scrap',
-    'Plastic Scrap Dealer',
-    'Paper / Cardboard Scrap',
-    'Vehicle / Automobile Scrap',
-    'Construction & Demolition Waste',
-    'General Waste Collector',
-    'Recycling Agency / Processor',
-    'Other',
-  ];
-
-  const ENTITY_OPTIONS = [
-    { label: 'Individual', value: 'individual' },
-    { label: 'Shop / Retail', value: 'shop' },
-    { label: 'Mall', value: 'mall' },
-    { label: 'Supermarket', value: 'supermarket' },
-    { label: 'Industry / Factory', value: 'industry' },
-    { label: 'Scrap Center', value: 'scrap_center' },
-    { label: 'Recycling Agency', value: 'agency' },
-    { label: 'Pickup Partner', value: 'pickup_agent' },
-  ];
-
-  const getCapabilities = (type) => {
-    switch (type) {
-      case 'individual':
-      case 'shop':
-      case 'mall':
-      case 'supermarket':
-      case 'industry':
-        return { canSell: true, canBuy: false, canRequestPickup: true, canOfferPickup: false };
-      case 'scrap_center':
-        return { canSell: true, canBuy: true, canRequestPickup: false, canOfferPickup: true };
-      case 'agency':
-        return { canSell: false, canBuy: true, canRequestPickup: false, canOfferPickup: true };
-      case 'pickup_agent':
-        return { canSell: false, canBuy: false, canRequestPickup: false, canOfferPickup: true };
-      default:
-        return { canSell: false, canBuy: false, canRequestPickup: false, canOfferPickup: false };
+  const handleLogoTap = () => {
+    const next = logoTaps + 1;
+    setLogoTaps(next);
+    if (next === 5) {
+      setAdminUnlocked(true);
+      Alert.alert('🔐 Admin Mode', 'Admin registration unlocked.');
     }
   };
 
-  const isOrganization = entityType !== 'individual';
+  const isOrganization = entityType !== 'individual' && entityType !== 'admin';
+  const isAdmin = entityType === 'admin';
   const isAgency = entityType === 'agency';
   const isPickupAgent = entityType === 'pickup_agent';
-  const requiresGST = isAgency;
-  const requiresCategory = isOrganization && !isPickupAgent;
-  const requiresBusinessName = isOrganization;
-  const requiresLocation = isOrganization;
-  const requiresAddress = isOrganization;
-
-  const getCategoryOptions = () => {
-    return entityType === 'agency' || entityType === 'scrap_center' 
-      ? SCRAP_TYPES 
-      : BUSINESS_TYPES;
-  };
-
-  const getNameLabel = () => {
-    const labels = {
-      shop: 'Shop',
-      mall: 'Mall',
-      supermarket: 'Supermarket',
-      industry: 'Industry',
-      scrap_center: 'Scrap Center',
-      agency: 'Agency',
-      pickup_agent: 'Pickup Partner',
-    };
-    return labels[entityType] || 'Organization';
-  };
-
-  const validateGST = (gst) => {
-    const cleaned = gst.trim().toUpperCase();
-    return /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(cleaned);
-  };
 
   useEffect(() => {
     if (!isOrganization) {
-      setBusinessName('');
-      setLocation('');
-      setAddress('');
-      setBusinessCategory('Select Type');
-      setGstNumber('');
+      setBusinessName(''); setLocation(''); setAddress('');
+      setBusinessCategory('Select Type'); setGstNumber('');
     } else if (isPickupAgent) {
-      // Pickup agents don't need GST or category
-      setGstNumber('');
-      setBusinessCategory('Select Type');
+      setGstNumber(''); setBusinessCategory('Select Type');
     }
   }, [entityType]);
 
-  const validateForm = () => {
+  const validateGST = (gst) => /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(gst.trim().toUpperCase());
+
+  const validate = () => {
     if (!name.trim() || !phone.trim() || !email.trim() || !password.trim()) {
-      Alert.alert('Missing Fields', 'Please fill all required fields');
-      return false;
+      Alert.alert('Missing Fields', 'Please fill all required fields'); return false;
     }
-
-    if (password.length < 6) {
-      Alert.alert('Weak Password', 'Password should be at least 6 characters');
-      return false;
-    }
-
-    if (password !== confirmPassword) {
-      Alert.alert('Password Mismatch', 'Passwords do not match');
-      return false;
-    }
-
-    const phoneDigits = phone.replace(/[^0-9]/g, '');
-    if (phoneDigits.length < 10) {
-      Alert.alert('Invalid Phone', 'Please enter a valid Indian phone number');
-      return false;
-    }
-
+    if (password.length < 6) { Alert.alert('Weak Password', 'Minimum 6 characters'); return false; }
+    if (password !== confirmPassword) { Alert.alert('Mismatch', 'Passwords do not match'); return false; }
+    if (phone.replace(/[^0-9]/g, '').length < 10) { Alert.alert('Invalid Phone', 'Enter a valid 10-digit number'); return false; }
+    if (isAdmin) return true;
     if (isOrganization) {
-      if (requiresBusinessName && !businessName.trim()) {
-        Alert.alert('Missing Field', `Please enter ${getNameLabel()} name`);
-        return false;
-      }
-      if (requiresLocation && !location.trim()) {
-        Alert.alert('Missing Field', 'Please enter location (town/city)');
-        return false;
-      }
-      if (requiresAddress && !address.trim()) {
-        Alert.alert('Missing Field', 'Please enter full address');
-        return false;
-      }
-      if (requiresCategory && businessCategory === 'Select Type') {
-        Alert.alert('Missing Field', 'Please select type of business / activity');
-        return false;
-      }
-      if (requiresGST) {
-        if (!gstNumber.trim()) {
-          Alert.alert('Mandatory', 'GST Number is required for Recycling Agencies');
-          return false;
-        }
-        if (!validateGST(gstNumber)) {
-          Alert.alert('Invalid GST', 'Please enter a valid 15-character GST number (e.g. 22AAAAA0000A1Z5)');
-          return false;
-        }
+      if (!businessName.trim()) { Alert.alert('Missing', 'Enter business name'); return false; }
+      if (!location.trim()) { Alert.alert('Missing', 'Enter location'); return false; }
+      if (!address.trim()) { Alert.alert('Missing', 'Enter address'); return false; }
+      if (!isPickupAgent && businessCategory === 'Select Type') { Alert.alert('Missing', 'Select business type'); return false; }
+      if (isAgency) {
+        if (!gstNumber.trim()) { Alert.alert('Required', 'GST Number is mandatory for agencies'); return false; }
+        if (!validateGST(gstNumber)) { Alert.alert('Invalid GST', 'Enter a valid GST number (e.g. 22AAAAA0000A1Z5)'); return false; }
       }
     }
-
     return true;
   };
 
-  // Location capture (non-blocking, only for agency & pickup_agent)
   const captureLocation = async () => {
     if (!isAgency && !isPickupAgent) return { latitude: null, longitude: null };
-
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== 'granted') {
-        Alert.alert(
-          'Location Permission',
-          'We need location access to help buyers find you. You can skip now and add it later in your profile.'
-        );
-        return { latitude: null, longitude: null };
-      }
-
-      const position = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const { latitude, longitude } = position.coords;
-      return { latitude, longitude };
-    } catch (err) {
-      console.error('Location capture error:', err);
-      Alert.alert(
-        'Location Unavailable',
-        'Could not retrieve your current location. Registration will continue without coordinates. You can update later.'
-      );
-      return { latitude: null, longitude: null };
-    }
+      if (status !== 'granted') return { latitude: null, longitude: null };
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      return { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+    } catch { return { latitude: null, longitude: null }; }
   };
 
   const handleRegister = async () => {
-    if (!validateForm()) return;
-
+    if (!validate()) return;
     setLoading(true);
-
     try {
-      // 1. Create Firebase Auth user
-      const userCred = await createUserWithEmailAndPassword(
-        auth,
-        email.trim().toLowerCase(),
-        password
-      );
-
+      const userCred = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
       const uid = userCred.user.uid;
-      const capabilities = getCapabilities(entityType);
-      const finalGst = requiresGST ? gstNumber.trim().toUpperCase() : '';
       const { latitude, longitude } = await captureLocation();
-
       const now = serverTimestamp();
-
-      // 2. Prepare common user data (users collection)
-      const userData = {
-        role: 'participant',
-        entityType,
-        capabilities,
-
+      const userData = isAdmin ? {
+        role: 'admin',
+        entityType: 'admin',
         name: name.trim(),
         phone: phone.trim(),
         email: email.trim().toLowerCase(),
-
+        profileCompleted: true,
+        createdAt: now,
+        updatedAt: now,
+      } : {
+        role: 'participant', entityType, capabilities: getCapabilities(entityType),
+        name: name.trim(), phone: phone.trim(), email: email.trim().toLowerCase(),
         businessName: isOrganization ? businessName.trim() : '',
         location: isOrganization ? location.trim() : '',
         address: isOrganization ? address.trim() : '',
-
-        latitude,
-        longitude,
-
+        latitude, longitude,
         serviceRadiusKm: isAgency ? 10 : isPickupAgent ? 15 : null,
         isActive: isAgency || isPickupAgent,
         kycStatus: (isAgency || isPickupAgent) ? 'pending' : null,
-
-        businessCategory:
-          requiresCategory && businessCategory !== 'Select Type'
-            ? businessCategory.trim()
-            : '',
-
-        gstNumber: finalGst,
-
-        profileCompleted: true,
-
-        createdAt: now,
-        updatedAt: now,
+        businessCategory: (!isPickupAgent && businessCategory !== 'Select Type') ? businessCategory.trim() : '',
+        gstNumber: isAgency ? gstNumber.trim().toUpperCase() : '',
+        profileCompleted: true, createdAt: now, updatedAt: now,
       };
-
-      // 3. Save to main users collection
       await setDoc(doc(db, 'users', uid), userData);
-
-      // 4. Save to specialized collections if needed
-      if (isAgency) {
+      if (!isAdmin && isAgency) {
         await setDoc(doc(db, 'agencies', uid), {
-          agencyId: uid,
-          businessName: businessName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone.trim(),
-          locationName: location.trim(),
-          latitude,
-          longitude,
-          capabilities,
-          isActive: true,
-          rates: [],
-          createdAt: now,
+          agencyId: uid, businessName: businessName.trim(),
+          email: email.trim().toLowerCase(), phone: phone.trim(),
+          locationName: location.trim(), latitude, longitude,
+          capabilities: getCapabilities(entityType), isActive: true, rates: [], createdAt: now,
         });
       }
-
-      if (isPickupAgent) {
+      if (!isAdmin && isPickupAgent) {
         await setDoc(doc(db, 'pickup_agents', uid), {
-          agentId: uid,
-          name: name.trim(),
-          phone: phone.trim(),
-          email: email.trim().toLowerCase(),
-          locationName: location.trim(),
-          latitude,
-          longitude,
-          isAvailable: true,
-          serviceRadiusKm: 15,
-          createdAt: now,
+          agentId: uid, name: name.trim(), phone: phone.trim(),
+          email: email.trim().toLowerCase(), locationName: location.trim(),
+          latitude, longitude, isAvailable: true, serviceRadiusKm: 15, createdAt: now,
         });
       }
-
-      Alert.alert(
-        'Registration Successful',
-        'Welcome to HidG! Your account has been created. ♻️'
-      );
+      Alert.alert('Welcome to HidG! ♻️', 'Your account has been created successfully.');
       navigation.replace('HomeRouter');
     } catch (error) {
-      console.error('Registration error:', error);
-      let msg = 'Something went wrong. Please try again.';
-      
-      if (error.code === 'auth/email-already-in-use') msg = 'This email is already registered';
-      else if (error.code === 'auth/invalid-email') msg = 'Invalid email format';
-      else if (error.code === 'auth/weak-password') msg = 'Password is too weak';
-      else if (error.code === 'auth/operation-not-allowed') msg = 'Email/password accounts are not enabled';
-
-      Alert.alert('Registration Failed', msg);
+      const msgs = {
+        'auth/email-already-in-use': 'This email is already registered',
+        'auth/invalid-email': 'Invalid email format',
+        'auth/weak-password': 'Password is too weak',
+      };
+      Alert.alert('Registration Failed', msgs[error.code] || error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const EntityButton = ({ label, value, selected, onPress }) => (
-    <TouchableOpacity
-      onPress={() => onPress(value)}
-      activeOpacity={0.8}
-      style={[
-        styles.roleButton,
-        selected ? styles.roleButtonSelected : styles.roleButtonUnselected,
-      ]}
-    >
-      <Text
-        style={[
-          styles.roleButtonText,
-          selected ? styles.roleButtonTextSelected : styles.roleButtonTextUnselected,
-        ]}
-      >
-        {label}
-      </Text>
-    </TouchableOpacity>
+  const wrap = (field) => [styles.inputWrap, focused === field && styles.inputWrapFocused];
+  const focus = (f) => setFocused(f);
+  const blur = () => setFocused(null);
+
+  const Field = ({ label, icon, children }) => (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.label}>{label}</Text>
+      <View style={children.props?.focused !== undefined ? wrap(children.props.focused) : styles.inputWrap}>
+        {icon && <Ionicons name={icon} size={17} color={C.textMuted} style={styles.inputIcon} />}
+        {children}
+      </View>
+    </View>
   );
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 0}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.branding}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={styles.logoHid}>Hid</Text>
-            <Text style={styles.logoG}>G</Text>
-          </View>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+
+        {/* Logo */}
+        <View style={styles.logoArea}>
+          <TouchableOpacity onPress={handleLogoTap} activeOpacity={1}>
+            <View style={styles.logoBox}>
+              <Text style={styles.logoHid}>Hid</Text>
+              <Text style={styles.logoG}>G</Text>
+            </View>
+          </TouchableOpacity>
           <Text style={styles.tagline}>Scrap Smart • Recycle Better</Text>
+          {adminUnlocked && (
+            <View style={styles.adminUnlockedBadge}>
+              <Ionicons name="shield-checkmark-outline" size={12} color="#4F46E5" />
+              <Text style={styles.adminUnlockedText}>Admin mode active</Text>
+            </View>
+          )}
         </View>
 
-        <Text style={styles.title}>Join Our Digital Trade Market Platform</Text>
-        <Text style={styles.subtitle}>Be part of our HidG community ♻️</Text>
+        <Text style={styles.pageTitle}>Create Account</Text>
+        <Text style={styles.pageSub}>Join the HidG recycling community ♻️</Text>
 
-        <View style={styles.form}>
-          <View>
+        {/* Personal Info */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Personal Information</Text>
+
+          <View style={styles.fieldGroup}>
             <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Your full name"
-              placeholderTextColor="#94a3b8"
-              autoCapitalize="words"
-            />
-          </View>
-
-          <View>
-            <Text style={styles.label}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              placeholder="+91 98765 43210"
-              placeholderTextColor="#94a3b8"
-              maxLength={15}
-            />
-          </View>
-
-          <View>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              placeholder="yourname@example.com"
-              placeholderTextColor="#94a3b8"
-              autoCapitalize="none"
-            />
-          </View>
-
-          <View>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              placeholder="••••••••••••"
-              placeholderTextColor="#94a3b8"
-            />
-          </View>
-
-          <View>
-            <Text style={styles.label}>Confirm Password</Text>
-            <TextInput
-              style={styles.input}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              placeholder="••••••••••••"
-              placeholderTextColor="#94a3b8"
-            />
-          </View>
-
-          <View style={styles.roleSection}>
-            <Text style={styles.label}>I want to register as</Text>
-            <View style={styles.roleContainer}>
-              {ENTITY_OPTIONS.map((opt) => (
-                <EntityButton
-                  key={opt.value}
-                  label={opt.label}
-                  value={opt.value}
-                  selected={entityType === opt.value}
-                  onPress={setEntityType}
-                />
-              ))}
+            <View style={[styles.inputWrap, focused === 'name' && styles.inputWrapFocused]}>
+              <Ionicons name="person-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+              <TextInput style={styles.inputInner} value={name} onChangeText={setName}
+                placeholder="Your full name" placeholderTextColor={C.textMuted}
+                autoCapitalize="words" onFocus={() => focus('name')} onBlur={blur} />
             </View>
           </View>
 
-          {isOrganization && (
-            <>
-              <View style={styles.sectionDivider}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.sectionTitle}>Organization Details</Text>
-                <View style={styles.dividerLine} />
-              </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Phone Number</Text>
+            <View style={[styles.inputWrap, focused === 'phone' && styles.inputWrapFocused]}>
+              <Ionicons name="call-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+              <TextInput style={styles.inputInner} value={phone} onChangeText={setPhone}
+                keyboardType="phone-pad" placeholder="+91 98765 43210" placeholderTextColor={C.textMuted}
+                maxLength={15} onFocus={() => focus('phone')} onBlur={blur} />
+            </View>
+          </View>
 
-              <View style={styles.expandContent}>
-                <View>
-                  <Text style={styles.label}>{getNameLabel()} Name</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={businessName}
-                    onChangeText={setBusinessName}
-                    placeholder="Enter name"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Email Address</Text>
+            <View style={[styles.inputWrap, focused === 'email' && styles.inputWrapFocused]}>
+              <Ionicons name="mail-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+              <TextInput style={styles.inputInner} value={email} onChangeText={setEmail}
+                keyboardType="email-address" autoCapitalize="none"
+                placeholder="yourname@example.com" placeholderTextColor={C.textMuted}
+                onFocus={() => focus('email')} onBlur={blur} />
+            </View>
+          </View>
 
-                <View>
-                  <Text style={styles.label}>Location (Town/City)</Text>
-                  <TextInput
-                    style={styles.input}
-                    value={location}
-                    onChangeText={setLocation}
-                    placeholder="e.g. chalakkudy, Thrissur"
-                    placeholderTextColor="#94a3b8"
-                  />
-                </View>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Password</Text>
+            <View style={[styles.inputWrap, focused === 'pass' && styles.inputWrapFocused]}>
+              <Ionicons name="lock-closed-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+              <TextInput style={styles.inputInner} value={password} onChangeText={setPassword}
+                secureTextEntry={!showPassword} placeholder="Min. 6 characters" placeholderTextColor={C.textMuted}
+                autoCapitalize="none" onFocus={() => focus('pass')} onBlur={blur} />
+              <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeBtn}>
+                <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={17} color={C.textMuted} />
+              </TouchableOpacity>
+            </View>
+          </View>
 
-                <View>
-                  <Text style={styles.label}>Full Address</Text>
-                  <TextInput
-                    style={[styles.input, styles.textArea]}
-                    value={address}
-                    onChangeText={setAddress}
-                    placeholder="House No, Street, Landmark..."
-                    placeholderTextColor="#94a3b8"
-                    multiline
-                    numberOfLines={4}
-                  />
-                </View>
-
-                {requiresCategory && (
-                  <View>
-                    <Text style={styles.label}>Type of Business / Activity</Text>
-                    <View
-                      style={[
-                        styles.pickerContainer,
-                        businessCategory !== 'Select Type' && styles.pickerContainerSelected,
-                      ]}
-                    >
-                      <Picker
-                        selectedValue={businessCategory}
-                        onValueChange={setBusinessCategory}
-                        style={[
-                          styles.picker,
-                          businessCategory !== 'Select Type' && styles.pickerSelected,
-                        ]}
-                        dropdownIconColor={businessCategory !== 'Select Type' ? '#3b82f6' : '#94a3b8'}
-                        mode="dropdown"
-                      >
-                        {getCategoryOptions().map((type) => (
-                          <Picker.Item
-                            key={type}
-                            label={type}
-                            value={type}
-                            color={type === businessCategory ? '#3b82f6' : '#94a3b8'}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-                  </View>
-                )}
-
-                {requiresGST && (
-                  <View>
-                    <Text style={[styles.label, styles.mandatoryLabel]}>
-                      GST Number <Text style={styles.asterisk}>*</Text> (Mandatory)
-                    </Text>
-                    <TextInput
-                      style={styles.input}
-                      value={gstNumber}
-                      onChangeText={setGstNumber}
-                      placeholder="22AAAAA0000A1Z5"
-                      placeholderTextColor="#94a3b8"
-                      autoCapitalize="characters"
-                      maxLength={15}
-                    />
-                  </View>
-                )}
-              </View>
-            </>
-          )}
-
-          <TouchableOpacity
-            style={[styles.registerButton, loading && styles.buttonDisabled]}
-            onPress={handleRegister}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
-            {loading ? (
-              <ActivityIndicator color="white" size="small" />
-            ) : (
-              <Text style={styles.registerButtonText}>Register</Text>
-            )}
-          </TouchableOpacity>
-
-          <Text style={styles.footerText}>Convert your waste to Gold ♻️</Text>
+          <View style={styles.fieldGroup}>
+            <Text style={styles.label}>Confirm Password</Text>
+            <View style={[styles.inputWrap, focused === 'cpass' && styles.inputWrapFocused]}>
+              <Ionicons name="lock-closed-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+              <TextInput style={styles.inputInner} value={confirmPassword} onChangeText={setConfirmPassword}
+                secureTextEntry placeholder="Repeat password" placeholderTextColor={C.textMuted}
+                autoCapitalize="none" onFocus={() => focus('cpass')} onBlur={blur} />
+            </View>
+          </View>
         </View>
+
+        {/* Account Type */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account Type</Text>
+          <View style={styles.entityGrid}>
+            {ENTITY_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[styles.entityBtn, entityType === opt.value && styles.entityBtnActive]}
+                onPress={() => setEntityType(opt.value)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={opt.icon}
+                  size={20}
+                  color={entityType === opt.value ? C.primary : C.textMuted}
+                />
+                <Text style={[styles.entityBtnText, entityType === opt.value && styles.entityBtnTextActive]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {adminUnlocked && (
+              <TouchableOpacity
+                style={[styles.entityBtn, styles.adminBtn, entityType === 'admin' && styles.adminBtnActive]}
+                onPress={() => setEntityType('admin')}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="shield-checkmark-outline" size={20} color={entityType === 'admin' ? '#4F46E5' : '#9CA3AF'} />
+                <Text style={[styles.entityBtnText, entityType === 'admin' && styles.adminBtnText]}>Admin</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Organization Details */}
+        {isOrganization && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Organization Details</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Business Name</Text>
+              <View style={[styles.inputWrap, focused === 'bname' && styles.inputWrapFocused]}>
+                <Ionicons name="business-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+                <TextInput style={styles.inputInner} value={businessName} onChangeText={setBusinessName}
+                  placeholder="Enter business name" placeholderTextColor={C.textMuted}
+                  onFocus={() => focus('bname')} onBlur={blur} />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Location (Town / City)</Text>
+              <View style={[styles.inputWrap, focused === 'loc' && styles.inputWrapFocused]}>
+                <Ionicons name="location-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+                <TextInput style={styles.inputInner} value={location} onChangeText={setLocation}
+                  placeholder="e.g. Chalakkudy, Thrissur" placeholderTextColor={C.textMuted}
+                  onFocus={() => focus('loc')} onBlur={blur} />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Full Address</Text>
+              <View style={[styles.inputWrap, styles.textAreaWrap, focused === 'addr' && styles.inputWrapFocused]}>
+                <TextInput style={[styles.inputInner, styles.textAreaInner]} value={address} onChangeText={setAddress}
+                  placeholder="House No, Street, Landmark..." placeholderTextColor={C.textMuted}
+                  multiline numberOfLines={3} textAlignVertical="top"
+                  onFocus={() => focus('addr')} onBlur={blur} />
+              </View>
+            </View>
+
+            {!isPickupAgent && (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Business Category</Text>
+                <View style={[styles.inputWrap, styles.pickerWrap]}>
+                  <Picker
+                    selectedValue={businessCategory}
+                    onValueChange={setBusinessCategory}
+                    style={styles.picker}
+                    dropdownIconColor={C.textSecondary}
+                    mode="dropdown"
+                  >
+                    {(isAgency || entityType === 'scrap_center' ? SCRAP_TYPES : BUSINESS_TYPES).map(t => (
+                      <Picker.Item key={t} label={t} value={t} color={C.textPrimary} />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+            )}
+
+            {isAgency && (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>
+                  GST Number <Text style={styles.required}>*</Text>
+                </Text>
+                <View style={[styles.inputWrap, focused === 'gst' && styles.inputWrapFocused]}>
+                  <Ionicons name="document-text-outline" size={17} color={C.textMuted} style={styles.inputIcon} />
+                  <TextInput style={styles.inputInner} value={gstNumber} onChangeText={setGstNumber}
+                    placeholder="22AAAAA0000A1Z5" placeholderTextColor={C.textMuted}
+                    autoCapitalize="characters" maxLength={15}
+                    onFocus={() => focus('gst')} onBlur={blur} />
+                </View>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Submit */}
+        <TouchableOpacity
+          style={[styles.btn, loading && styles.btnDisabled]}
+          onPress={handleRegister}
+          disabled={loading}
+          activeOpacity={0.85}
+        >
+          {loading
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={styles.btnText}>Create Account</Text>
+          }
+        </TouchableOpacity>
+
+        <View style={styles.loginRow}>
+          <Text style={styles.loginText}>Already have an account? </Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <Text style={styles.loginLink}>Sign In</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.footer}>♻️ Convert your waste to value</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
+  container: { flex: 1, backgroundColor: C.bg },
+  scroll: { paddingHorizontal: 20, paddingTop: 52, paddingBottom: 60 },
+
+  logoArea: { alignItems: 'center', marginBottom: 28 },
+  logoBox: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  logoHid: { fontSize: 48, fontWeight: '900', color: C.textPrimary, letterSpacing: -1 },
+  logoG: { fontSize: 48, fontWeight: '900', color: C.primary, letterSpacing: -1, marginLeft: -4 },
+  tagline: { fontSize: 13, color: C.textMuted, fontWeight: '500' },
+
+  pageTitle: { fontSize: 26, fontWeight: '800', color: C.textPrimary, textAlign: 'center', marginBottom: 4 },
+  pageSub: { fontSize: 14, color: C.textSecondary, textAlign: 'center', marginBottom: 28 },
+
+  section: {
+    backgroundColor: C.surface, borderRadius: R.xl, padding: 20,
+    marginBottom: 16, borderWidth: 1, borderColor: C.border, ...S.card,
   },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingTop: 50,
-    paddingBottom: 160,
+  sectionTitle: { fontSize: 13, fontWeight: '700', color: C.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 16 },
+
+  fieldGroup: { marginBottom: 14 },
+  label: { fontSize: 13, fontWeight: '600', color: C.textSecondary, marginBottom: 6 },
+  required: { color: C.danger },
+  inputWrap: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: C.surfaceAlt, borderRadius: R.md,
+    borderWidth: 1.5, borderColor: C.border, paddingHorizontal: 12,
   },
-  branding: {
-    alignItems: 'center',
-    marginBottom: 40,
+  inputWrapFocused: { borderColor: C.primary, backgroundColor: C.primaryLight },
+  textAreaWrap: { alignItems: 'flex-start', paddingTop: 10 },
+  inputIcon: { marginRight: 8 },
+  inputInner: { flex: 1, fontSize: 15, color: C.textPrimary, paddingVertical: 12 },
+  textAreaInner: { minHeight: 72, paddingVertical: 0 },
+  eyeBtn: { padding: 4 },
+  pickerWrap: { paddingHorizontal: 4 },
+  picker: { flex: 1, color: C.textPrimary, height: 50 },
+
+  entityGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  entityBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 10, paddingHorizontal: 14, borderRadius: R.md,
+    backgroundColor: C.surfaceAlt, borderWidth: 1.5, borderColor: C.border,
   },
-  logoHid: {
-    fontSize: 60,
-    fontWeight: '900',
-    color: '#ffffff',
-    letterSpacing: -1.5,
+  entityBtnActive: { backgroundColor: C.primaryLight, borderColor: C.primary },
+  entityBtnText: { fontSize: 13, fontWeight: '600', color: C.textSecondary },
+  entityBtnTextActive: { color: C.primary },
+
+  btn: {
+    backgroundColor: C.primary, borderRadius: R.lg,
+    paddingVertical: 16, alignItems: 'center', marginTop: 8, ...S.btn,
   },
-  logoG: {
-    fontSize: 60,
-    fontWeight: '900',
-    color: '#3b82f6',
-    letterSpacing: -1.5,
-    marginLeft: -6,
-  },
-  tagline: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#60a5fa',
-    marginTop: 6,
-    opacity: 0.9,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#f1f5f9',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginBottom: 40,
-  },
-  form: {
-    gap: 28,
-  },
-  label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#cbd5e1',
-    marginBottom: 8,
-  },
-  mandatoryLabel: {
-    color: '#ef4444',
-  },
-  asterisk: {
-    color: '#f87171',
-    fontWeight: '900',
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#f1f5f9',
-    borderWidth: 1.5,
-    borderColor: '#334155',
-  },
-  textArea: {
-    height: 90,
-    textAlignVertical: 'top',
-  },
-  roleSection: {
-    marginTop: 12,
-  },
-  roleContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    justifyContent: 'space-between',
-    paddingHorizontal: 4,
-  },
-  roleButton: {
-    flex: 0,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 110,
-    maxWidth: '48%',
-  },
-  roleButtonSelected: {
-    backgroundColor: '#2563eb',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  roleButtonUnselected: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1.5,
-    borderColor: '#475569',
-  },
-  roleButtonText: {
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  roleButtonTextSelected: {
-    color: 'white',
-  },
-  roleButtonTextUnselected: {
-    color: '#e2e8f0',
-  },
-  sectionDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 24,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#334155',
-  },
-  sectionTitle: {
-    color: '#60a5fa',
-    fontSize: 16,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-  },
-  expandContent: {
-    marginTop: 8,
-    paddingHorizontal: 4,
-    gap: 32,
-  },
-  pickerContainer: {
-    backgroundColor: '#1e293b',
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#334155',
-    overflow: 'hidden',
-  },
-  pickerContainerSelected: {
-    borderWidth: 2.5,
-    borderColor: '#3b82f6',
-    backgroundColor: '#1e40af10',
-  },
-  picker: {
-    height: 54,
-    color: '#cbd5e1',
-  },
-  pickerSelected: {
-    color: '#60a5fa',
-  },
-  registerButton: {
-    marginTop: 44,
-    backgroundColor: '#2563eb',
-    paddingVertical: 18,
-    borderRadius: 16,
-    alignItems: 'center',
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
-    elevation: 12,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  registerButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  footerText: {
-    textAlign: 'center',
-    color: '#64748b',
-    marginTop: 36,
-    fontSize: 13,
-  },
+  btnDisabled: { opacity: 0.6 },
+  btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  loginRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 20 },
+  loginText: { fontSize: 14, color: C.textSecondary },
+  loginLink: { fontSize: 14, color: C.primary, fontWeight: '700' },
+  footer: { textAlign: 'center', color: C.textMuted, fontSize: 13, marginTop: 20 },
+
+  adminUnlockedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#EEF2FF', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, marginTop: 6, borderWidth: 1, borderColor: '#E0E7FF' },
+  adminUnlockedText: { fontSize: 11, color: '#4F46E5', fontWeight: '600' },
+  adminBtn: { borderColor: '#E0E7FF', backgroundColor: '#EEF2FF' },
+  adminBtnActive: { borderColor: '#4F46E5', backgroundColor: '#EEF2FF' },
+  adminBtnText: { color: '#4F46E5', fontWeight: '700' },
 });

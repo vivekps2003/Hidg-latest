@@ -128,14 +128,23 @@ export default function SellerProfile({ navigation }) {
     };
   }, [orders]);
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      navigation.replace('LoginScreen');
-    } catch (err) {
-      console.error('Logout error:', err);
-      Alert.alert('Error', 'Failed to logout. Please try again.');
-    }
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { 
+        text: 'Sign Out', 
+        style: 'destructive', 
+        onPress: async () => {
+          try {
+            await signOut(auth);
+            navigation.replace('LoginScreen');
+          } catch (err) {
+            console.error('Logout error:', err);
+            Alert.alert('Error', 'Failed to logout');
+          }
+        }
+      },
+    ]);
   };
 
   const handleEditProfile = () => {
@@ -177,6 +186,16 @@ export default function SellerProfile({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+
+      {/* Notification Bell */}
+      <View style={styles.notificationContainer}>
+        <TouchableOpacity 
+          style={styles.notificationBtn}
+          onPress={() => navigation.navigate('NotificationsScreen')}
+        >
+          <Ionicons name="notifications" size={24} color="#f1f5f9" />
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -252,6 +271,45 @@ export default function SellerProfile({ navigation }) {
             </LinearGradient>
           </TouchableOpacity>
 
+          {/* Support & Legal Links */}
+          <View style={styles.linksSection}>
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('SupportScreen')}
+            >
+              <Ionicons name="help-circle-outline" size={20} color="#3b82f6" />
+              <Text style={styles.linkText}>Help & Support</Text>
+              <Ionicons name="chevron-forward" size={18} color="#64748b" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('ComplaintScreen')}
+            >
+              <Ionicons name="alert-circle-outline" size={20} color="#ef4444" />
+              <Text style={styles.linkText}>File Complaint</Text>
+              <Ionicons name="chevron-forward" size={18} color="#64748b" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('TermsAndConditionsScreen')}
+            >
+              <Ionicons name="document-text-outline" size={20} color="#8b5cf6" />
+              <Text style={styles.linkText}>Terms & Conditions</Text>
+              <Ionicons name="chevron-forward" size={18} color="#64748b" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('PrivacyPolicyScreen')}
+            >
+              <Ionicons name="shield-checkmark-outline" size={20} color="#10b981" />
+              <Text style={styles.linkText}>Privacy Policy</Text>
+              <Ionicons name="chevron-forward" size={18} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <View style={styles.logoutButtonInner}>
               <Ionicons name="log-out-outline" size={20} color="#ef4444" />
@@ -268,6 +326,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  notificationContainer: {
+    position: 'absolute',
+    top: 10,
+    right: 20,
+    zIndex: 10,
+  },
+  notificationBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#1e293b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   scrollContent: {
     padding: 20,
@@ -366,6 +440,28 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     gap: 12,
+  },
+  linksSection: {
+    backgroundColor: '#1e293b',
+    borderRadius: 16,
+    padding: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  linkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  linkText: {
+    flex: 1,
+    color: '#e2e8f0',
+    fontSize: 15,
+    fontWeight: '600',
   },
   editButton: {
     borderRadius: 16,

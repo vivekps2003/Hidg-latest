@@ -1,102 +1,92 @@
-// AgencyOrders.js
-// Agency sees all incoming orders — can Accept (→ tracking) or Reject them.
-
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  StyleSheet,
-  StatusBar,
-  ActivityIndicator,
-  Alert,
-  RefreshControl,
-  Animated,
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  StatusBar, ActivityIndicator, Alert, RefreshControl, Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { auth, db } from '../firebase';
 import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  doc,
-  updateDoc,
-  serverTimestamp,
+  collection, query, where, orderBy, onSnapshot,
+  doc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
+import { A, AS, AR } from '../agencyTheme';
+import { sendNotification, NotificationTemplates } from '../notificationHelper';
 
-// ─── Status config ────────────────────────────────────────────────────────────
 const STATUS_CONFIG = {
-  pending: { label: 'Awaiting Review', color: '#fbbf24', bg: '#1c1a0f', icon: 'time-outline' },
-  accepted: { label: 'Accepted', color: '#34d399', bg: '#0a1f17', icon: 'checkmark-circle-outline' },
-  rejected: { label: 'Rejected', color: '#f87171', bg: '#1f0a0a', icon: 'close-circle-outline' },
-  picked_up: { label: 'Picked Up', color: '#60a5fa', bg: '#0a1020', icon: 'car-outline' },
-  completed: { label: 'Completed', color: '#a78bfa', bg: '#130a1f', icon: 'ribbon-outline' },
+  pending:            { label: 'Awaiting Review',      color: A.primary,    bg: A.primaryLight,  border: A.border,        icon: 'time-outline' },
+  accepted:           { label: 'Accepted',             color: A.success,    bg: A.successLight,  border: A.successBorder, icon: 'checkmark-circle-outline' },
+  commission_pending: { label: 'Awaiting Seller',      color: '#f59e0b',    bg: '#fef3c7',       border: '#fde68a',       icon: 'hourglass-outline' },
+  rejected:           { label: 'Rejected',             color: A.danger,     bg: A.dangerLight,   border: A.dangerBorder,  icon: 'close-circle-outline' },
+  assigned:           { label: 'Agent Assigned',       color: '#7C3AED',    bg: '#EDE9FE',       border: '#DDD6FE',       icon: 'person-outline' },
+  in_progress:        { label: 'In Transit',           color: '#f59e0b',    bg: '#fef3c7',       border: '#fde68a',       icon: 'car-outline' },
+  picked_up:          { label: 'Picked Up',            color: A.info,       bg: A.infoLight,     border: A.infoBorder,    icon: 'cube-outline' },
+  weight_verified:    { label: 'Weight Verified',      color: '#8b5cf6',    bg: '#f3e8ff',       border: '#e9d5ff',       icon: 'scale-outline' },
+  verified:           { label: 'Seller Verified',      color: '#10b981',    bg: '#d1fae5',       border: '#6ee7b7',       icon: 'checkmark-done-outline' },
+  payment_received:   { label: 'Payment Received',     color: '#06b6d4',    bg: '#cffafe',       border: '#a5f3fc',       icon: 'wallet-outline' },
+  completed:          { label: 'Completed',            color: '#10b981',    bg: '#d1fae5',       border: '#6ee7b7',       icon: 'ribbon-outline' },
 };
 
 const FILTER_TABS = ['All', 'Pending', 'Accepted', 'Rejected', 'Completed'];
 
-// ─── Single Order Card ────────────────────────────────────────────────────────
-function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
-  const status = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
+function OrderCard({ order, onAccept, onReject, onTrack, onVerifyWeight, onProcessPayment, actionLoading }) {
+  const st = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending;
   const isPending = order.status === 'pending';
   const isAccepted = order.status === 'accepted';
+  const isCommissionPending = order.status === 'commission_pending';
   const isAssigned = order.status === 'assigned';
+  const isInProgress = order.status === 'in_progress';
+  const isPickedUp = order.status === 'picked_up';
+  const isWeightVerified = order.status === 'weight_verified';
+  const isVerified = order.status === 'verified';
+  const isPaymentReceived = order.status === 'payment_received';
+  const isCompleted = order.status === 'completed';
   const isBelowMin = order.belowMinimum && order.minPickupKg > 0;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 350,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
   }, []);
 
-  const createdAt = order.createdAt?.toDate?.();
-  const timeStr = createdAt
-    ? createdAt.toLocaleString('en-IN', {
-        day: '2-digit', month: 'short',
-        hour: '2-digit', minute: '2-digit',
-      })
-    : 'Just now';
+  const timeStr = order.createdAt?.toDate?.()?.toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  }) ?? 'Just now';
 
   return (
     <Animated.View style={[styles.card, { opacity: fadeAnim }]}>
-      {/* Card Top Row */}
+      {/* Header */}
       <View style={styles.cardHeader}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.sellerLabel}>Order Request</Text>
+          <Text style={styles.orderLabel}>Order Request</Text>
           <Text style={styles.orderId}>#{order.id.slice(-6).toUpperCase()}</Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: status.bg, borderColor: status.color }]}>
-          <Ionicons name={status.icon} size={13} color={status.color} />
-          <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: st.bg, borderColor: st.border }]}>
+          <Ionicons name={st.icon} size={12} color={st.color} />
+          <Text style={[styles.statusText, { color: st.color }]}>{st.label}</Text>
         </View>
       </View>
 
-      {/* Time */}
+      {/* Meta */}
       <View style={styles.metaRow}>
-        <Ionicons name="calendar-outline" size={13} color="#64748b" />
+        <Ionicons name="calendar-outline" size={13} color={A.textMuted} />
         <Text style={styles.metaText}>{timeStr}</Text>
       </View>
 
-      {/* Materials */}
       <View style={styles.divider} />
+
+      {/* Materials */}
       {(order.materials || []).map((mat, i) => (
-        <View key={i} style={styles.materialRow}>
-          <View style={styles.materialDot} />
-          <Text style={styles.materialName}>{mat.materialName}</Text>
-          <Text style={styles.materialQty}>{mat.quantityKg} kg</Text>
-          <Text style={styles.materialAmount}>₹{mat.subtotal?.toFixed(0)}</Text>
+        <View key={i} style={styles.matRow}>
+          <View style={styles.matDot} />
+          <Text style={styles.matName}>{mat.materialName}</Text>
+          <Text style={styles.matQty}>{mat.quantityKg} kg</Text>
+          <Text style={styles.matAmt}>₹{mat.subtotal?.toFixed(0)}</Text>
         </View>
       ))}
 
-      {/* Totals */}
       <View style={styles.divider} />
+
+      {/* Totals */}
       <View style={styles.totalsRow}>
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Total Weight</Text>
@@ -105,33 +95,43 @@ function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
         <View style={styles.totalDivider} />
         <View style={styles.totalItem}>
           <Text style={styles.totalLabel}>Est. Payout</Text>
-          <Text style={[styles.totalValue, { color: '#60a5fa' }]}>₹{order.estimatedAmount}</Text>
+          <Text style={[styles.totalValue, { color: A.primaryDark }]}>₹{order.estimatedAmount}</Text>
         </View>
       </View>
 
-      {/* Below Minimum Info */}
+      {/* Below minimum */}
       {isBelowMin && (
         <View style={styles.belowMinBanner}>
-          <Ionicons name="alert-circle-outline" size={14} color="#fbbf24" />
+          <Ionicons name="alert-circle-outline" size={14} color={A.primaryDark} />
           <Text style={styles.belowMinText}>
             {order.pickupAgentId
-              ? `Pickup agent assigned · ₹${order.commissionPerKg}/kg commission`
+              ? `Agent assigned · ₹${order.commissionPerKg}/kg commission`
               : `Below minimum (${order.minPickupKg} kg) · Awaiting pickup agent`}
           </Text>
         </View>
       )}
 
-      {/* Location chip if available */}
+      {/* Location */}
       {order.sellerLatitude && (
         <View style={styles.locationChip}>
-          <Ionicons name="navigate-circle-outline" size={14} color="#34d399" />
+          <Ionicons name="location-outline" size={13} color={A.success} />
           <Text style={styles.locationText}>
-            Seller location attached · {order.sellerLatitude.toFixed(4)}, {order.sellerLongitude.toFixed(4)}
+            {order.sellerLatitude.toFixed(4)}, {order.sellerLongitude.toFixed(4)}
           </Text>
         </View>
       )}
 
-      {/* Action Buttons */}
+      {/* Agent info */}
+      {order.pickupAgentId && (
+        <View style={styles.agentRow}>
+          <Ionicons name="bicycle-outline" size={14} color={A.success} />
+          <Text style={styles.agentText}>
+            Agent: {order.pickupAgentName || 'Assigned'} · ₹{order.commissionPerKg}/kg
+          </Text>
+        </View>
+      )}
+
+      {/* Actions */}
       {isPending && (
         <View style={styles.actionRow}>
           <TouchableOpacity
@@ -139,161 +139,170 @@ function OrderCard({ order, onAccept, onReject, onTrack, actionLoading }) {
             onPress={() => onReject(order.id)}
             disabled={actionLoading === order.id}
           >
-            {actionLoading === order.id ? (
-              <ActivityIndicator size="small" color="#f87171" />
-            ) : (
-              <>
-                <Ionicons name="close" size={18} color="#f87171" />
-                <Text style={styles.rejectBtnText}>Reject</Text>
-              </>
-            )}
+            {actionLoading === order.id
+              ? <ActivityIndicator size="small" color={A.danger} />
+              : <><Ionicons name="close" size={16} color={A.danger} /><Text style={styles.rejectBtnText}>Reject</Text></>
+            }
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.acceptBtn}
             onPress={() => onAccept(order.id)}
             disabled={actionLoading === order.id}
           >
-            {actionLoading === order.id ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="checkmark" size={18} color="#fff" />
-                <Text style={styles.acceptBtnText}>Accept</Text>
-              </>
-            )}
+            {actionLoading === order.id
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <><Ionicons name="checkmark" size={16} color="#fff" /><Text style={styles.acceptBtnText}>Accept</Text></>
+            }
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Assign Pickup Agent — removed: seller now broadcasts offer directly */}
-
-      {/* Pickup agent accepted info */}
-      {order.pickupAgentId && (
-        <View style={styles.agentAssignedRow}>
-          <Ionicons name="checkmark-circle" size={14} color="#34d399" />
-          <Text style={styles.agentAssignedText}>
-            Agent: {order.pickupAgentName || 'Assigned'} · ₹{order.commissionPerKg}/kg
-          </Text>
+      {isAccepted && !order.pickupAgentId && (
+        <View style={styles.waitingBanner}>
+          <Ionicons name="broadcast-outline" size={16} color="#3b82f6" />
+          <Text style={styles.waitingText}>Order broadcast to pickup agents. Waiting for offers...</Text>
         </View>
       )}
 
-      {/* Track button for accepted/assigned orders */}
-      {(isAccepted || isAssigned) && (
+      {isCommissionPending && (
+        <View style={styles.waitingBanner}>
+          <Ionicons name="hourglass-outline" size={16} color="#f59e0b" />
+          <Text style={styles.waitingText}>Waiting for seller to accept ₹{order.totalCommission} commission</Text>
+        </View>
+      )}
+
+      {(isAssigned || isInProgress) && (
         <TouchableOpacity style={styles.trackBtn} onPress={() => onTrack(order)}>
-          <Ionicons name="car-outline" size={18} color="#0f172a" />
-          <Text style={styles.trackBtnText}>Manage Pickup</Text>
+          <Ionicons name="car-outline" size={16} color="#fff" />
+          <Text style={styles.trackBtnText}>Track Pickup</Text>
         </TouchableOpacity>
+      )}
+
+      {isPickedUp && (
+        <TouchableOpacity style={styles.verifyWeightBtn} onPress={() => onVerifyWeight(order)}>
+          <Ionicons name="scale-outline" size={16} color="#fff" />
+          <Text style={styles.trackBtnText}>Verify Weight Now</Text>
+        </TouchableOpacity>
+      )}
+
+      {isWeightVerified && (
+        <View style={styles.waitingBanner}>
+          <Ionicons name="hourglass-outline" size={16} color="#f59e0b" />
+          <Text style={styles.waitingText}>Waiting for seller to verify weight</Text>
+        </View>
+      )}
+
+      {isVerified && (
+        <TouchableOpacity style={styles.paymentBtn} onPress={() => onProcessPayment(order)}>
+          <Ionicons name="wallet-outline" size={16} color="#fff" />
+          <Text style={styles.trackBtnText}>Process Payment to Admin</Text>
+        </TouchableOpacity>
+      )}
+
+      {isPaymentReceived && (
+        <View style={styles.waitingBanner}>
+          <Ionicons name="hourglass-outline" size={16} color="#06b6d4" />
+          <Text style={styles.waitingText}>Waiting for admin to distribute payment</Text>
+        </View>
+      )}
+
+      {isCompleted && (
+        <View style={styles.completedBanner}>
+          <Ionicons name="checkmark-circle" size={16} color="#10b981" />
+          <Text style={styles.completedText}>Order completed successfully!</Text>
+        </View>
       )}
     </Animated.View>
   );
 }
 
-// ─── Main Screen ──────────────────────────────────────────────────────────────
 export default function AgencyOrders({ navigation }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeFilter, setActiveFilter] = useState('All');
-  const [actionLoading, setActionLoading] = useState(null); // orderId being acted on
+  const [actionLoading, setActionLoading] = useState(null);
 
-  // Real-time listener for this agency's orders
   useEffect(() => {
     const agencyId = auth.currentUser?.uid;
-    if (!agencyId) {
-      setLoading(false);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'orders'),
-      where('agencyId', '==', agencyId),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsub = onSnapshot(q, snapshot => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setOrders(data);
+    if (!agencyId) { setLoading(false); return; }
+    const q = query(collection(db, 'orders'), where('agencyId', '==', agencyId), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, snap => {
+      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
       setRefreshing(false);
     }, err => {
-      console.error('Orders fetch error:', err.code, err.message);
-      Alert.alert('Error', `Could not load orders: ${err.message}`);
+      Alert.alert('Error', err.message);
       setLoading(false);
       setRefreshing(false);
     });
-
     return () => unsub();
   }, []);
 
   const handleAccept = useCallback(async (orderId) => {
-    Alert.alert(
-      'Accept Order',
-      'Confirm you want to accept this order and proceed to pickup?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Accept',
-          onPress: async () => {
-            setActionLoading(orderId);
-            try {
-              await updateDoc(doc(db, 'orders', orderId), {
-                status: 'accepted',
-                acceptedAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-              // Navigate to tracking for this order
-              const order = orders.find(o => o.id === orderId);
-              if (order) {
-                navigation.navigate('OrderTracking', { order: { ...order, status: 'accepted' } });
-              }
-            } catch (e) {
-              console.error('Accept failed:', e.code, e.message);
-              Alert.alert('Error', e.code === 'permission-denied'
-                ? 'Permission denied. Check Firestore rules allow agency to update orders.'
-                : 'Could not accept order. Please try again.');
-            } finally {
-              setActionLoading(null);
+    Alert.alert('Accept Order', 'Confirm you want to accept this order?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Accept',
+        onPress: async () => {
+          setActionLoading(orderId);
+          try {
+            const order = orders.find(o => o.id === orderId);
+            await updateDoc(doc(db, 'orders', orderId), { status: 'accepted', acceptedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+            
+            // Send notification to seller
+            if (order?.sellerId) {
+              const notif = NotificationTemplates.orderAccepted(order.agencyName || 'Agency');
+              await sendNotification(order.sellerId, notif.type, notif.message, orderId);
             }
-          },
+            
+            if (order) navigation.navigate('OrderTracking', { order: { ...order, status: 'accepted' } });
+          } catch (e) {
+            Alert.alert('Error', e.code === 'permission-denied' ? 'Permission denied.' : 'Could not accept. Try again.');
+          } finally { setActionLoading(null); }
         },
-      ]
-    );
+      },
+    ]);
   }, [orders, navigation]);
 
   const handleReject = useCallback(async (orderId) => {
-    Alert.alert(
-      'Reject Order',
-      'Are you sure you want to reject this order?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async () => {
-            setActionLoading(orderId);
-            try {
-              await updateDoc(doc(db, 'orders', orderId), {
-                status: 'rejected',
-                rejectedAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
-              });
-            } catch (e) {
-              console.error('Reject failed:', e.code, e.message);
-              Alert.alert('Error', e.code === 'permission-denied'
-                ? 'Permission denied. Check Firestore rules allow agency to update orders.'
-                : 'Could not reject order. Please try again.');
-            } finally {
-              setActionLoading(null);
+    Alert.alert('Reject Order', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reject', style: 'destructive',
+        onPress: async () => {
+          setActionLoading(orderId);
+          try {
+            const order = orders.find(o => o.id === orderId);
+            await updateDoc(doc(db, 'orders', orderId), { status: 'rejected', rejectedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+            
+            // Send notification to seller
+            if (order?.sellerId) {
+              const notif = NotificationTemplates.orderRejected(order.agencyName || 'Agency');
+              await sendNotification(order.sellerId, notif.type, notif.message, orderId);
             }
-          },
+          } catch (e) {
+            Alert.alert('Error', e.code === 'permission-denied' ? 'Permission denied.' : 'Could not reject. Try again.');
+          } finally { setActionLoading(null); }
         },
-      ]
-    );
+      },
+    ]);
   }, []);
 
   const handleTrack = useCallback((order) => {
-    navigation.navigate('OrderTracking', { order });
+    if (order.status === 'accepted' && !order.pickupAgentId) {
+      navigation.navigate('RequestPickupAgent', { order });
+    } else {
+      navigation.navigate('OrderTracking', { order });
+    }
+  }, [navigation]);
+
+  const handleVerifyWeight = useCallback((order) => {
+    navigation.navigate('WeightVerificationScreen', { order });
+  }, [navigation]);
+
+  const handleProcessPayment = useCallback((order) => {
+    navigation.navigate('PaymentScreen', { order });
   }, [navigation]);
 
   const filteredOrders = orders.filter(o => {
@@ -305,29 +314,36 @@ export default function AgencyOrders({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <StatusBar barStyle="dark-content" backgroundColor={A.bg} />
 
       {/* Header */}
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Incoming Orders</Text>
           <Text style={styles.headerSub}>
-            {pendingCount > 0 ? `${pendingCount} awaiting your review` : 'All orders reviewed'}
+            {pendingCount > 0 ? `${pendingCount} awaiting review` : 'All orders reviewed'}
           </Text>
         </View>
-        {pendingCount > 0 && (
-          <View style={styles.pendingBadge}>
-            <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
-          </View>
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <TouchableOpacity 
+            style={styles.notificationBtn}
+            onPress={() => navigation.navigate('NotificationsScreen')}
+          >
+            <Ionicons name="notifications" size={22} color={A.textPrimary} />
+          </TouchableOpacity>
+          {pendingCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{pendingCount}</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Filter Tabs */}
       <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
+        horizontal showsHorizontalScrollIndicator={false}
         style={styles.filterRow}
-        contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}
       >
         {FILTER_TABS.map(tab => (
           <TouchableOpacity
@@ -342,34 +358,21 @@ export default function AgencyOrders({ navigation }) {
         ))}
       </ScrollView>
 
-      {/* Orders List */}
       {loading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#2563eb" />
+          <ActivityIndicator size="large" color={A.primary} />
           <Text style={styles.loadingText}>Loading orders...</Text>
         </View>
       ) : filteredOrders.length === 0 ? (
         <View style={styles.centered}>
-          <Ionicons name="file-tray-outline" size={56} color="#334155" />
+          <View style={styles.emptyIcon}><Ionicons name="file-tray-outline" size={36} color={A.textMuted} /></View>
           <Text style={styles.emptyTitle}>No {activeFilter === 'All' ? '' : activeFilter} Orders</Text>
-          <Text style={styles.emptySubtitle}>
-            {activeFilter === 'All'
-              ? 'New order requests will appear here.'
-              : `No orders with "${activeFilter}" status.`}
-          </Text>
+          <Text style={styles.emptySub}>New order requests will appear here.</Text>
         </View>
       ) : (
         <ScrollView
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-              }}
-              tintColor="#2563eb"
-            />
-          }
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => setRefreshing(true)} tintColor={A.primary} colors={[A.primary]} />}
         >
           {filteredOrders.map(order => (
             <OrderCard
@@ -378,6 +381,8 @@ export default function AgencyOrders({ navigation }) {
               onAccept={handleAccept}
               onReject={handleReject}
               onTrack={handleTrack}
+              onVerifyWeight={handleVerifyWeight}
+              onProcessPayment={handleProcessPayment}
               actionLoading={actionLoading}
             />
           ))}
@@ -388,166 +393,134 @@ export default function AgencyOrders({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f172a' },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-  headerTitle: { color: '#f1f5f9', fontSize: 24, fontWeight: '800' },
-  headerSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
-  pendingBadge: {
-    backgroundColor: '#fbbf24',
-    borderRadius: 20,
-    minWidth: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-  },
-  pendingBadgeText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
+  container: { flex: 1, backgroundColor: A.bg },
 
-  filterRow: { maxHeight: 52, marginBottom: 4 },
-  filterTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
+  header: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12,
+    backgroundColor: A.surface, borderBottomWidth: 1, borderBottomColor: A.border,
   },
-  filterTabActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  filterTabText: { color: '#94a3b8', fontSize: 13, fontWeight: '600' },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: A.textPrimary },
+  headerSub: { fontSize: 13, color: A.textMuted, marginTop: 2 },
+  badge: {
+    backgroundColor: A.primary, borderRadius: 20, minWidth: 32, height: 32,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10,
+  },
+  badgeText: { color: '#fff', fontSize: 14, fontWeight: '800' },
+  notificationBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: A.surfaceAlt, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: A.border,
+  },
+
+  filterRow: { maxHeight: 52, backgroundColor: A.surface, borderBottomWidth: 1, borderBottomColor: A.border },
+  filterTab: {
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginVertical: 8,
+    backgroundColor: A.surfaceAlt, borderWidth: 1, borderColor: A.border,
+  },
+  filterTabActive: { backgroundColor: A.primary, borderColor: A.primary },
+  filterTabText: { color: A.textSecondary, fontSize: 13, fontWeight: '600' },
   filterTabTextActive: { color: '#fff' },
 
-  listContent: { padding: 16, paddingBottom: 40, gap: 16 },
+  list: { padding: 16, gap: 14, paddingBottom: 40 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
+  loadingText: { color: A.textMuted, fontSize: 15 },
+  emptyIcon: { width: 72, height: 72, borderRadius: 36, backgroundColor: A.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: A.textPrimary },
+  emptySub: { fontSize: 14, color: A.textMuted, textAlign: 'center' },
 
   card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 18,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#334155',
+    backgroundColor: A.surface, borderRadius: AR.xl, padding: 16,
+    borderWidth: 1, borderColor: A.border, ...AS.card,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
-  sellerLabel: { color: '#64748b', fontSize: 11, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase' },
-  orderId: { color: '#f1f5f9', fontSize: 18, fontWeight: '800', marginTop: 2 },
+  cardHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },
+  orderLabel: { fontSize: 11, color: A.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.6 },
+  orderId: { fontSize: 20, fontWeight: '800', color: A.textPrimary, marginTop: 2 },
   statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
-    gap: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1,
   },
   statusText: { fontSize: 11, fontWeight: '700' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 12 },
-  metaText: { color: '#64748b', fontSize: 12 },
 
-  divider: { height: 1, backgroundColor: '#334155', marginVertical: 12 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 10 },
+  metaText: { color: A.textMuted, fontSize: 12 },
+  divider: { height: 1, backgroundColor: A.border, marginVertical: 10 },
 
-  materialRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
-  },
-  materialDot: {
-    width: 6, height: 6, borderRadius: 3, backgroundColor: '#2563eb',
-  },
-  materialName: { color: '#cbd5e1', fontSize: 14, flex: 1 },
-  materialQty: { color: '#94a3b8', fontSize: 13, width: 55, textAlign: 'right' },
-  materialAmount: { color: '#60a5fa', fontSize: 13, width: 60, textAlign: 'right', fontWeight: '600' },
+  matRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 },
+  matDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: A.primary },
+  matName: { flex: 1, fontSize: 13, color: A.textSecondary },
+  matQty: { fontSize: 13, color: A.textMuted, width: 50, textAlign: 'right' },
+  matAmt: { fontSize: 13, fontWeight: '600', color: A.primaryDark, width: 55, textAlign: 'right' },
 
-  totalsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  totalItem: { alignItems: 'center', flex: 1 },
-  totalLabel: { color: '#64748b', fontSize: 12, marginBottom: 4 },
-  totalValue: { color: '#f1f5f9', fontSize: 17, fontWeight: '700' },
-  totalDivider: { width: 1, height: 32, backgroundColor: '#334155' },
-
-  locationChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#0a1f17',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#134e35',
-  },
-  locationText: { color: '#34d399', fontSize: 11, flex: 1 },
-
-  actionRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  rejectBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 13,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#f87171',
-    backgroundColor: '#1f0a0a',
-  },
-  rejectBtnText: { color: '#f87171', fontSize: 15, fontWeight: '700' },
-  acceptBtn: {
-    flex: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 13,
-    borderRadius: 12,
-    backgroundColor: '#16a34a',
-  },
-  acceptBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-
-  trackBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
-    backgroundColor: '#34d399',
-  },
-  trackBtnText: { color: '#0f172a', fontSize: 15, fontWeight: '800' },
-
-  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  loadingText: { color: '#64748b', fontSize: 15 },
-  emptyTitle: { color: '#cbd5e1', fontSize: 20, fontWeight: '700' },
-  emptySubtitle: { color: '#64748b', fontSize: 14, textAlign: 'center', paddingHorizontal: 40 },
+  totalsRow: { flexDirection: 'row', alignItems: 'center' },
+  totalItem: { flex: 1, alignItems: 'center' },
+  totalLabel: { fontSize: 12, color: A.textMuted, marginBottom: 4 },
+  totalValue: { fontSize: 17, fontWeight: '700', color: A.textPrimary },
+  totalDivider: { width: 1, height: 32, backgroundColor: A.border },
 
   belowMinBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#1c1a0f', borderRadius: 8, padding: 10,
-    marginTop: 10, borderWidth: 1, borderColor: '#78350f',
+    backgroundColor: A.primaryLight, borderRadius: AR.sm, padding: 10,
+    marginTop: 10, borderWidth: 1, borderColor: A.border,
   },
-  belowMinText: { color: '#fbbf24', fontSize: 12, flex: 1 },
+  belowMinText: { color: A.primaryDark, fontSize: 12, flex: 1 },
 
-  assignPickupBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, marginTop: 12, paddingVertical: 13, borderRadius: 12,
-    backgroundColor: '#fbbf24',
-  },
-  assignPickupBtnText: { color: '#0f172a', fontSize: 14, fontWeight: '800' },
-
-  agentAssignedRow: {
+  locationChip: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#0a1f17', borderRadius: 8, padding: 10,
-    marginTop: 10, borderWidth: 1, borderColor: '#134e35',
+    backgroundColor: A.successLight, borderRadius: AR.sm, padding: 8,
+    marginTop: 8, borderWidth: 1, borderColor: A.successBorder,
   },
-  agentAssignedText: { color: '#34d399', fontSize: 12, flex: 1 },
+  locationText: { color: A.success, fontSize: 11, flex: 1 },
+
+  agentRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: A.successLight, borderRadius: AR.sm, padding: 8,
+    marginTop: 8, borderWidth: 1, borderColor: A.successBorder,
+  },
+  agentText: { color: A.success, fontSize: 12, flex: 1, fontWeight: '600' },
+
+  actionRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  rejectBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 12, borderRadius: AR.md,
+    borderWidth: 1.5, borderColor: A.dangerBorder, backgroundColor: A.dangerLight,
+  },
+  rejectBtnText: { color: A.danger, fontSize: 14, fontWeight: '700' },
+  acceptBtn: {
+    flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 12, borderRadius: AR.md,
+    backgroundColor: A.success, ...AS.btn,
+  },
+  acceptBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  trackBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, marginTop: 12, paddingVertical: 12, borderRadius: AR.md,
+    backgroundColor: A.primary, ...AS.btn,
+  },
+  verifyWeightBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, marginTop: 12, paddingVertical: 12, borderRadius: AR.md,
+    backgroundColor: '#8b5cf6', ...AS.btn,
+  },
+  paymentBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, marginTop: 12, paddingVertical: 12, borderRadius: AR.md,
+    backgroundColor: '#10b981', ...AS.btn,
+  },
+  trackBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+
+  waitingBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#fef3c7', borderRadius: AR.md, padding: 12,
+    marginTop: 12, borderWidth: 1, borderColor: '#fde68a',
+  },
+  waitingText: { fontSize: 13, color: '#92400e', fontWeight: '600', flex: 1, textAlign: 'center' },
+
+  completedBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: '#d1fae5', borderRadius: AR.md, padding: 12,
+    marginTop: 12, borderWidth: 1, borderColor: '#6ee7b7',
+  },
+  completedText: { fontSize: 13, color: '#065f46', fontWeight: '700' },
 });

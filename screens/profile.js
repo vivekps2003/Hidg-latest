@@ -1,39 +1,32 @@
-// AdvancedProfile.js
 import React, { useState, useEffect } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Alert,
-  ActivityIndicator,
-  StyleSheet,
-  SafeAreaView,
-  KeyboardAvoidingView,
-  Platform,
-  Image,
+  View, Text, TextInput, TouchableOpacity, ScrollView, Alert,
+  ActivityIndicator, StyleSheet, SafeAreaView, KeyboardAvoidingView,
+  Platform, Image, StatusBar,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { getAuth, signOut } from 'firebase/auth';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
-  getStorage,
-  ref,
-  uploadBytes,
-  getDownloadURL,
-} from 'firebase/storage';
+import { getFirestore, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
+import { C, S, R } from '../theme';
 
-const AdvancedProfileScreen = () => {
+const ENTITY_LABELS = {
+  individual: 'Individual', shop: 'Shop', mall: 'Mall',
+  supermarket: 'Supermarket', industry: 'Industry',
+  scrap_center: 'Scrap Center', agency: 'Agency', pickup_agent: 'Pickup Agent',
+};
+
+const ENTITY_COLORS = {
+  individual: '#3B82F6', shop: '#F59E0B', mall: '#8B5CF6',
+  supermarket: '#06B6D4', industry: '#EF4444', scrap_center: '#10B981',
+  agency: '#6366F1', pickup_agent: '#F97316',
+};
+
+export default function ProfileScreen() {
   const auth = getAuth();
   const db = getFirestore();
   const storage = getStorage();
@@ -41,600 +34,456 @@ const AdvancedProfileScreen = () => {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [isUploadingProfile, setIsUploadingProfile] = useState(false);
-  const [isUploadingGst, setIsUploadingGst] = useState(false);
-  const [isUploadingLicense, setIsUploadingLicense] = useState(false);
-
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [uploadingGst, setUploadingGst] = useState(false);
+  const [uploadingLicense, setUploadingLicense] = useState(false);
   const [userData, setUserData] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    businessName: '',
-    location: '',
-    address: '',
-    businessCategory: '',
-    gstNumber: '',
+  const [focused, setFocused] = useState(null);
+  const [form, setForm] = useState({
+    name: '', phone: '', businessName: '', location: '', address: '', businessCategory: '', gstNumber: '',
   });
 
-  // Fetch user profile
   useEffect(() => {
-    const fetchUserData = async () => {
+    const fetch = async () => {
       try {
-        const currentUser = auth.currentUser;
-        if (!currentUser) {
-          navigation.replace('Login');
-          return;
-        }
-
-        const userDocRef = doc(db, 'users', currentUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-
-        if (userDocSnap.exists()) {
-          const data = userDocSnap.data();
-          setUserData(data);
-
-          setFormData({
-            name: data.name || '',
-            phone: data.phone || '',
-            businessName: data.businessName || '',
-            location: data.location || '',
-            address: data.address || '',
-            businessCategory: data.businessCategory || '',
-            gstNumber: data.gstNumber || '',
-          });
-        } else {
-          Alert.alert('Error', 'Profile not found');
-          navigation.replace('Login');
-        }
-      } catch (error) {
-        console.error('Profile fetch error:', error);
+        const user = auth.currentUser;
+        if (!user) { navigation.replace('Login'); return; }
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (!snap.exists()) { navigation.replace('Login'); return; }
+        const d = snap.data();
+        setUserData(d);
+        setForm({ name: d.name || '', phone: d.phone || '', businessName: d.businessName || '', location: d.location || '', address: d.address || '', businessCategory: d.businessCategory || '', gstNumber: d.gstNumber || '' });
+      } catch (e) {
         Alert.alert('Error', 'Failed to load profile');
       } finally {
         setLoading(false);
       }
     };
+    fetch();
+  }, []);
 
-    fetchUserData();
-  }, [auth, db, navigation]);
-
-  // Common upload helper
-  const uploadFileToStorage = async (uri, path, contentType) => {
+  const uploadFile = async (uri, path, contentType) => {
     const storageRef = ref(storage, path);
-    const response = await fetch(uri);
-    const blob = await response.blob();
+    const blob = await (await fetch(uri)).blob();
     await uploadBytes(storageRef, blob, { contentType });
-    return await getDownloadURL(storageRef);
+    return getDownloadURL(storageRef);
   };
 
-  // Profile Picture Upload
-  const handleUploadProfilePicture = async () => {
+  const handlePhotoUpload = async () => {
     try {
-      setIsUploadingProfile(true);
-
+      setUploadingPhoto(true);
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Gallery access is required');
-        return;
-      }
-
-      const pickerResult = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (pickerResult.canceled || !pickerResult.assets?.length) return;
-
-      // Resize + Compress
-      const manipResult = await ImageManipulator.manipulateAsync(
-        pickerResult.assets[0].uri,
-        [{ resize: { width: 512 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      const currentUser = auth.currentUser;
-      const storagePath = `profilePictures/${currentUser.uid}.jpg`;
-      const downloadURL = await uploadFileToStorage(
-        manipResult.uri,
-        storagePath,
-        'image/jpeg'
-      );
-
-      const userDocRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userDocRef, {
-        profilePictureUrl: downloadURL,
-        updatedAt: serverTimestamp(),
-      });
-
-      setUserData((prev) => ({ ...prev, profilePictureUrl: downloadURL }));
-
-      Alert.alert('Success', 'Profile picture updated!');
-    } catch (error) {
-      console.error('Profile picture upload failed:', error);
-      Alert.alert('Upload Failed', 'Please try again');
+      if (status !== 'granted') { Alert.alert('Permission Denied', 'Gallery access required'); return; }
+      const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+      if (result.canceled || !result.assets?.length) return;
+      const compressed = await ImageManipulator.manipulateAsync(result.assets[0].uri, [{ resize: { width: 512 } }], { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG });
+      const url = await uploadFile(compressed.uri, `profilePictures/${auth.currentUser.uid}.jpg`, 'image/jpeg');
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), { profilePictureUrl: url, updatedAt: serverTimestamp() });
+      setUserData(p => ({ ...p, profilePictureUrl: url }));
+      Alert.alert('Success', 'Profile photo updated!');
+    } catch (e) {
+      Alert.alert('Error', 'Upload failed. Try again.');
     } finally {
-      setIsUploadingProfile(false);
+      setUploadingPhoto(false);
     }
   };
 
-  // KYC Document Upload (GST or Business License)
-  const handleUploadKYC = async (type) => {
+  const handleKycUpload = async (type) => {
     const isGst = type === 'gst';
-    const setUploading = isGst ? setIsUploadingGst : setIsUploadingLicense;
-
+    const setUploading = isGst ? setUploadingGst : setUploadingLicense;
     try {
       setUploading(true);
-
-      const pickerResult = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/jpeg', 'image/png'],
-        copyToCacheDirectory: true,
-      });
-
-      if (pickerResult.canceled || !pickerResult.assets?.length) return;
-
-      const file = pickerResult.assets[0];
-
-      if (file.size > 5 * 1024 * 1024) {
-        Alert.alert('File Too Large', 'Maximum allowed size is 5 MB');
-        return;
-      }
-
-      const currentUser = auth.currentUser;
-      const storagePath = `kyc/${currentUser.uid}/${isGst ? 'gstCertificate' : 'businessLicense'}`;
-      const contentType = file.mimeType || (file.name?.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
-
-      const downloadURL = await uploadFileToStorage(file.uri, storagePath, contentType);
-
-      const userDocRef = doc(db, 'users', currentUser.uid);
-
-      const updatePayload = {
-        [`kycDocuments.${isGst ? 'gstCertificateUrl' : 'businessLicenseUrl'}`]: downloadURL,
+      const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/jpeg', 'image/png'], copyToCacheDirectory: true });
+      if (result.canceled || !result.assets?.length) return;
+      const file = result.assets[0];
+      if (file.size > 5 * 1024 * 1024) { Alert.alert('Too Large', 'Max file size is 5 MB'); return; }
+      const path = `kyc/${auth.currentUser.uid}/${isGst ? 'gstCertificate' : 'businessLicense'}`;
+      const url = await uploadFile(file.uri, path, file.mimeType || 'application/pdf');
+      const payload = {
+        [`kycDocuments.${isGst ? 'gstCertificateUrl' : 'businessLicenseUrl'}`]: url,
         updatedAt: serverTimestamp(),
       };
-
-      const currentStatus = userData?.kycStatus || 'not_submitted';
-      if (currentStatus !== 'approved') {
-        updatePayload.kycStatus = 'pending';
-        updatePayload.kycSubmittedAt = serverTimestamp();
-        if (currentStatus === 'rejected') {
-          updatePayload.kycRejectionReason = '';
-        }
-      }
-
-      await updateDoc(userDocRef, updatePayload);
-
-      // Optimistic UI update
-      setUserData((prev) => ({
-        ...prev,
-        kycDocuments: {
-          ...(prev.kycDocuments || {}),
-          [isGst ? 'gstCertificateUrl' : 'businessLicenseUrl']: downloadURL,
-        },
-        kycStatus: updatePayload.kycStatus || prev.kycStatus,
-        kycSubmittedAt: updatePayload.kycSubmittedAt || prev.kycSubmittedAt,
-        kycRejectionReason: updatePayload.kycRejectionReason !== undefined ? updatePayload.kycRejectionReason : prev.kycRejectionReason,
-      }));
-
-      Alert.alert('Success', `${isGst ? 'GST Certificate' : 'Business License'} uploaded successfully!`);
-    } catch (error) {
-      console.error('KYC upload error:', error);
-      Alert.alert('Upload Failed', 'Please try again');
+      if (userData?.kycStatus !== 'approved') { payload.kycStatus = 'pending'; payload.kycSubmittedAt = serverTimestamp(); }
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), payload);
+      setUserData(p => ({ ...p, kycDocuments: { ...(p.kycDocuments || {}), [isGst ? 'gstCertificateUrl' : 'businessLicenseUrl']: url }, kycStatus: payload.kycStatus || p.kycStatus }));
+      Alert.alert('Uploaded', `${isGst ? 'GST Certificate' : 'Business License'} uploaded!`);
+    } catch (e) {
+      Alert.alert('Error', 'Upload failed.');
     } finally {
       setUploading(false);
     }
   };
 
-  // Validation
-  const validateForm = () => {
-    if (!formData.name.trim()) {
-      Alert.alert('Error', 'Name is required');
-      return false;
-    }
-    if (!formData.phone || formData.phone.length !== 10 || isNaN(formData.phone)) {
-      Alert.alert('Error', 'Valid 10-digit phone number is required');
-      return false;
-    }
-
-    if (userData?.entityType !== 'individual') {
-      if (!formData.businessName.trim() || !formData.location.trim() || !formData.address.trim() || !formData.businessCategory.trim()) {
-        Alert.alert('Error', 'All organization fields are required');
-        return false;
-      }
-    }
-
-    if (userData?.entityType === 'agency') {
-      const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
-      if (!formData.gstNumber || !gstRegex.test(formData.gstNumber.toUpperCase())) {
-        Alert.alert('Error', 'Please enter a valid GST Number (e.g. 22AAAAA0000A1Z5)');
-        return false;
-      }
-    }
-
-    return true;
-  };
-
-  // Update Profile (non-KYC fields)
-  const handleUpdateProfile = async () => {
-    if (!validateForm()) return;
-
+  const handleSave = async () => {
+    if (!form.name.trim()) { Alert.alert('Required', 'Name is required'); return; }
+    if (!form.phone || form.phone.replace(/\D/g, '').length < 10) { Alert.alert('Invalid', 'Enter a valid 10-digit phone number'); return; }
     setSaving(true);
-
     try {
-      const currentUser = auth.currentUser;
-      const userDocRef = doc(db, 'users', currentUser.uid);
-
-      const updatePayload = {
-        name: formData.name.trim(),
-        phone: formData.phone.trim(),
-        updatedAt: serverTimestamp(),
-      };
-
+      const payload = { name: form.name.trim(), phone: form.phone.trim(), updatedAt: serverTimestamp() };
       if (userData.entityType !== 'individual') {
-        Object.assign(updatePayload, {
-          businessName: formData.businessName.trim(),
-          location: formData.location.trim(),
-          address: formData.address.trim(),
-          businessCategory: formData.businessCategory.trim(),
-        });
+        Object.assign(payload, { businessName: form.businessName.trim(), location: form.location.trim(), address: form.address.trim(), businessCategory: form.businessCategory.trim() });
       }
-
-      if (userData.entityType === 'agency') {
-        updatePayload.gstNumber = formData.gstNumber.trim().toUpperCase();
-      }
-
-      await updateDoc(userDocRef, updatePayload);
-
-      setUserData((prev) => ({ ...prev, ...updatePayload, updatedAt: new Date() }));
-
-      Alert.alert('Success', 'Profile updated successfully!');
-    } catch (error) {
-      console.error('Profile update error:', error);
-      Alert.alert('Error', 'Failed to update profile');
+      if (userData.entityType === 'agency') payload.gstNumber = form.gstNumber.trim().toUpperCase();
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), payload);
+      setUserData(p => ({ ...p, ...payload }));
+      Alert.alert('Saved', 'Profile updated successfully!');
+    } catch (e) {
+      Alert.alert('Error', 'Failed to save.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleLogout = async () => {
-    Alert.alert('Logout', 'Are you sure?', [
+  const handleLogout = () => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Logout',
-        style: 'destructive',
+      { 
+        text: 'Sign Out', 
+        style: 'destructive', 
         onPress: async () => {
           try {
             await signOut(auth);
             navigation.replace('Login');
-          } catch (error) {
-            Alert.alert('Error', 'Logout failed');
+          } catch (err) {
+            console.error('Logout error:', err);
+            Alert.alert('Error', 'Failed to logout');
           }
-        },
+        }
       },
     ]);
   };
 
-  // Helpers
-  const getEntityColor = (type) => {
-    const colors = {
-      individual: '#2196F3',
-      shop: '#FF9800',
-      mall: '#9C27B0',
-      supermarket: '#00BCD4',
-      industry: '#FF5722',
-      scrap_center: '#4CAF50',
-      agency: '#607D8B',
-    };
-    return colors[type] || '#757575';
-  };
-
-  const getKycStatusColor = (status) => {
-    switch (status) {
-      case 'approved': return '#4CAF50';
-      case 'pending': return '#FF9800';
-      case 'rejected': return '#f44336';
-      default: return '#757575';
-    }
-  };
-
-  const renderCapability = (label, enabled) => (
-    <View style={[styles.capBadge, { backgroundColor: enabled ? '#4CAF50' : '#f44336' }]}>
-      <Text style={styles.capText}>
-        {label}: {enabled ? 'YES' : 'NO'}
-      </Text>
-    </View>
+  if (loading) return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <View style={styles.centered}><ActivityIndicator size="large" color={C.primary} /></View>
+    </SafeAreaView>
   );
 
-  if (loading) {
-    return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading profile...</Text>
-      </SafeAreaView>
-    );
-  }
-
+  const isOrg = userData?.entityType !== 'individual';
+  const isAgency = userData?.entityType === 'agency';
   const isKycEligible = ['agency', 'scrap_center'].includes(userData?.entityType);
   const kycStatus = userData?.kycStatus || 'not_submitted';
-  const isVerified = userData?.profileVerified === true;
   const kycDocs = userData?.kycDocuments || {};
+  const entityColor = ENTITY_COLORS[userData?.entityType] || C.primary;
+  const inputWrap = (f) => [styles.inputWrap, focused === f && styles.inputWrapFocused];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.container}
-      >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+
           {/* Profile Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={handleUploadProfilePicture} disabled={isUploadingProfile} style={styles.profilePicContainer}>
-              {userData?.profilePictureUrl ? (
-                <Image source={{ uri: userData.profilePictureUrl }} style={styles.profileImage} />
-              ) : (
-                <View style={styles.profilePlaceholder}>
-                  <Text style={styles.placeholderInitial}>
-                    {(userData?.name || 'U').charAt(0).toUpperCase()}
-                  </Text>
-                  <Text style={styles.addPhotoLabel}>TAP TO ADD PHOTO</Text>
-                </View>
-              )}
-
-              {isUploadingProfile && (
-                <View style={styles.uploadingOverlay}>
-                  <ActivityIndicator color="#fff" />
-                </View>
-              )}
-
-              {userData?.profilePictureUrl && !isUploadingProfile && (
-                <View style={styles.editBadge}>
-                  <Text style={styles.editText}>EDIT</Text>
-                </View>
-              )}
+          <View style={styles.profileHeader}>
+            <TouchableOpacity onPress={handlePhotoUpload} disabled={uploadingPhoto} style={styles.photoWrap}>
+              {userData?.profilePictureUrl
+                ? <Image source={{ uri: userData.profilePictureUrl }} style={styles.photo} />
+                : (
+                  <View style={[styles.photoPlaceholder, { backgroundColor: entityColor + '20', borderColor: entityColor }]}>
+                    <Text style={[styles.photoInitial, { color: entityColor }]}>{(userData?.name || 'U').charAt(0).toUpperCase()}</Text>
+                  </View>
+                )
+              }
+              {uploadingPhoto
+                ? <View style={styles.photoOverlay}><ActivityIndicator color="#fff" /></View>
+                : <View style={styles.editPhotoBtn}><Ionicons name="camera" size={14} color="#fff" /></View>
+              }
             </TouchableOpacity>
 
-            <Text style={styles.name}>{userData?.name || 'User'}</Text>
+            <Text style={styles.profileName}>{userData?.name || 'User'}</Text>
+            <Text style={styles.profileEmail}>{userData?.email}</Text>
 
             <View style={styles.badgesRow}>
-              <View style={[styles.entityBadge, { backgroundColor: getEntityColor(userData?.entityType) }]}>
-                <Text style={styles.entityText}>
-                  {userData?.entityType?.toUpperCase().replace('_', ' ')}
+              <View style={[styles.entityBadge, { backgroundColor: entityColor + '15', borderColor: entityColor }]}>
+                <Text style={[styles.entityBadgeText, { color: entityColor }]}>
+                  {ENTITY_LABELS[userData?.entityType] || userData?.entityType}
                 </Text>
               </View>
-
-              {isVerified && (
+              {userData?.profileVerified && (
                 <View style={styles.verifiedBadge}>
-                  <Text style={styles.verifiedText}>✓ VERIFIED</Text>
+                  <Ionicons name="checkmark-circle" size={13} color={C.success} />
+                  <Text style={styles.verifiedText}>Verified</Text>
                 </View>
               )}
             </View>
           </View>
 
-          {/* Basic & Organization Info */}
+          {/* Profile Info */}
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Profile Information</Text>
 
-            <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.name}
-              onChangeText={(t) => setFormData({ ...formData, name: t })}
-              editable={!isVerified}
-            />
+            {[
+              { label: 'Full Name', key: 'name', icon: 'person-outline', keyboard: 'default' },
+              { label: 'Phone Number', key: 'phone', icon: 'call-outline', keyboard: 'phone-pad' },
+            ].map(f => (
+              <View key={f.key} style={styles.fieldGroup}>
+                <Text style={styles.label}>{f.label}</Text>
+                <View style={inputWrap(f.key)}>
+                  <Ionicons name={f.icon} size={16} color={focused === f.key ? C.primary : C.textMuted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.inputInner}
+                    value={form[f.key]}
+                    onChangeText={v => setForm(p => ({ ...p, [f.key]: v }))}
+                    keyboardType={f.keyboard}
+                    onFocus={() => setFocused(f.key)}
+                    onBlur={() => setFocused(null)}
+                  />
+                </View>
+              </View>
+            ))}
 
-            <Text style={styles.label}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              value={formData.phone}
-              onChangeText={(t) => setFormData({ ...formData, phone: t.replace(/[^0-9]/g, '') })}
-              keyboardType="phone-pad"
-              maxLength={10}
-              editable={!isVerified}
-            />
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Email</Text>
+              <View style={styles.readonlyWrap}>
+                <Ionicons name="mail-outline" size={16} color={C.textMuted} style={styles.inputIcon} />
+                <Text style={styles.readonlyText}>{userData?.email}</Text>
+                <View style={styles.lockIcon}><Ionicons name="lock-closed-outline" size={13} color={C.textMuted} /></View>
+              </View>
+            </View>
 
-            <Text style={styles.label}>Email (non-editable)</Text>
-            <Text style={styles.nonEditable}>{userData?.email}</Text>
+            {isOrg && [
+              { label: 'Business Name', key: 'businessName', icon: 'business-outline' },
+              { label: 'Location / City', key: 'location', icon: 'location-outline' },
+              { label: 'Full Address', key: 'address', icon: 'map-outline', multiline: true },
+              { label: 'Business Category', key: 'businessCategory', icon: 'pricetag-outline' },
+            ].map(f => (
+              <View key={f.key} style={styles.fieldGroup}>
+                <Text style={styles.label}>{f.label}</Text>
+                <View style={[inputWrap(f.key), f.multiline && styles.textAreaWrap]}>
+                  <Ionicons name={f.icon} size={16} color={focused === f.key ? C.primary : C.textMuted} style={[styles.inputIcon, f.multiline && { marginTop: 2 }]} />
+                  <TextInput
+                    style={[styles.inputInner, f.multiline && styles.textAreaInner]}
+                    value={form[f.key]}
+                    onChangeText={v => setForm(p => ({ ...p, [f.key]: v }))}
+                    multiline={f.multiline}
+                    textAlignVertical={f.multiline ? 'top' : 'center'}
+                    onFocus={() => setFocused(f.key)}
+                    onBlur={() => setFocused(null)}
+                  />
+                </View>
+              </View>
+            ))}
 
-            {userData?.entityType !== 'individual' && (
-              <>
-                <Text style={styles.label}>Business Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.businessName}
-                  onChangeText={(t) => setFormData({ ...formData, businessName: t })}
-                  editable={!isVerified}
-                />
-
-                <Text style={styles.label}>Location / City</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.location}
-                  onChangeText={(t) => setFormData({ ...formData, location: t })}
-                  editable={!isVerified}
-                />
-
-                <Text style={styles.label}>Full Address</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={formData.address}
-                  onChangeText={(t) => setFormData({ ...formData, address: t })}
-                  multiline
-                  editable={!isVerified}
-                />
-
-                <Text style={styles.label}>Business Category</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.businessCategory}
-                  onChangeText={(t) => setFormData({ ...formData, businessCategory: t })}
-                  editable={!isVerified}
-                />
-              </>
-            )}
-
-            {userData?.entityType === 'agency' && (
-              <>
+            {isAgency && (
+              <View style={styles.fieldGroup}>
                 <Text style={styles.label}>GST Number</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.gstNumber}
-                  onChangeText={(t) => setFormData({ ...formData, gstNumber: t.toUpperCase() })}
-                  maxLength={15}
-                  autoCapitalize="characters"
-                  editable={!isVerified}
-                />
-              </>
+                <View style={inputWrap('gst')}>
+                  <Ionicons name="document-text-outline" size={16} color={focused === 'gst' ? C.primary : C.textMuted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.inputInner}
+                    value={form.gstNumber}
+                    onChangeText={v => setForm(p => ({ ...p, gstNumber: v.toUpperCase() }))}
+                    autoCapitalize="characters"
+                    maxLength={15}
+                    onFocus={() => setFocused('gst')}
+                    onBlur={() => setFocused(null)}
+                  />
+                </View>
+              </View>
             )}
           </View>
 
           {/* Capabilities */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Trading Capabilities</Text>
-            <View style={styles.capGrid}>
-              {renderCapability('Can Sell', userData?.capabilities?.canSell)}
-              {renderCapability('Can Buy', userData?.capabilities?.canBuy)}
-              {renderCapability('Request Pickup', userData?.capabilities?.canRequestPickup)}
-              {renderCapability('Offer Pickup', userData?.capabilities?.canOfferPickup)}
+            <Text style={styles.sectionTitle}>Capabilities</Text>
+            <View style={styles.capsGrid}>
+              {[
+                { label: 'Can Sell', val: userData?.capabilities?.canSell },
+                { label: 'Can Buy', val: userData?.capabilities?.canBuy },
+                { label: 'Request Pickup', val: userData?.capabilities?.canRequestPickup },
+                { label: 'Offer Pickup', val: userData?.capabilities?.canOfferPickup },
+              ].map((cap, i) => (
+                <View key={i} style={[styles.capBadge, { backgroundColor: cap.val ? C.successLight : C.surfaceAlt, borderColor: cap.val ? C.successBorder : C.border }]}>
+                  <Ionicons name={cap.val ? 'checkmark-circle' : 'close-circle'} size={14} color={cap.val ? C.success : C.textMuted} />
+                  <Text style={[styles.capText, { color: cap.val ? C.success : C.textMuted }]}>{cap.label}</Text>
+                </View>
+              ))}
             </View>
           </View>
 
-          {/* KYC Section - Only for agency & scrap_center */}
+          {/* KYC */}
           {isKycEligible && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>KYC Verification</Text>
 
-              <View style={[styles.kycStatusBadge, { backgroundColor: getKycStatusColor(kycStatus) }]}>
-                <Text style={styles.kycStatusText}>
-                  {kycStatus.toUpperCase().replace('_', ' ')}
+              <View style={[styles.kycStatusBox, {
+                backgroundColor: kycStatus === 'approved' ? C.successLight : kycStatus === 'pending' ? C.warningLight : C.dangerLight,
+                borderColor: kycStatus === 'approved' ? C.successBorder : kycStatus === 'pending' ? C.warningBorder : C.dangerBorder,
+              }]}>
+                <Ionicons
+                  name={kycStatus === 'approved' ? 'shield-checkmark-outline' : kycStatus === 'pending' ? 'time-outline' : 'alert-circle-outline'}
+                  size={18}
+                  color={kycStatus === 'approved' ? C.success : kycStatus === 'pending' ? C.warning : C.danger}
+                />
+                <Text style={[styles.kycStatusText, { color: kycStatus === 'approved' ? C.success : kycStatus === 'pending' ? C.warning : C.danger }]}>
+                  KYC {kycStatus.replace('_', ' ').toUpperCase()}
                 </Text>
               </View>
 
-              {kycStatus === 'rejected' && userData?.kycRejectionReason && (
-                <Text style={styles.rejectionReason}>
-                  Reason: {userData.kycRejectionReason}
-                </Text>
-              )}
-
-              {/* GST Certificate */}
-              <View style={styles.kycRow}>
-                <Text style={styles.kycLabel}>GST Certificate</Text>
-                <Text style={kycDocs.gstCertificateUrl ? styles.uploadedText : styles.notUploadedText}>
-                  {kycDocs.gstCertificateUrl ? '✓ Uploaded' : 'Not uploaded'}
-                </Text>
-                <TouchableOpacity
-                  style={[styles.kycUploadBtn, (isUploadingGst || kycStatus === 'approved') && styles.disabledBtn]}
-                  onPress={() => handleUploadKYC('gst')}
-                  disabled={isUploadingGst || kycStatus === 'approved'}
-                >
-                  {isUploadingGst ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.kycUploadText}>
-                      {kycDocs.gstCertificateUrl ? 'REPLACE' : 'UPLOAD'}
+              {[
+                { label: 'GST Certificate', key: 'gstCertificateUrl', type: 'gst', uploading: uploadingGst },
+                { label: 'Business License', key: 'businessLicenseUrl', type: 'license', uploading: uploadingLicense },
+              ].map(doc => (
+                <View key={doc.key} style={styles.kycRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.kycDocLabel}>{doc.label}</Text>
+                    <Text style={[styles.kycDocStatus, { color: kycDocs[doc.key] ? C.success : C.textMuted }]}>
+                      {kycDocs[doc.key] ? '✓ Uploaded' : 'Not uploaded'}
                     </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {/* Business License */}
-              <View style={styles.kycRow}>
-                <Text style={styles.kycLabel}>Business License</Text>
-                <Text style={kycDocs.businessLicenseUrl ? styles.uploadedText : styles.notUploadedText}>
-                  {kycDocs.businessLicenseUrl ? '✓ Uploaded' : 'Not uploaded'}
-                </Text>
-                <TouchableOpacity
-                  style={[styles.kycUploadBtn, (isUploadingLicense || kycStatus === 'approved') && styles.disabledBtn]}
-                  onPress={() => handleUploadKYC('license')}
-                  disabled={isUploadingLicense || kycStatus === 'approved'}
-                >
-                  {isUploadingLicense ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.kycUploadText}>
-                      {kycDocs.businessLicenseUrl ? 'REPLACE' : 'UPLOAD'}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {kycStatus === 'approved' && (
-                <Text style={styles.approvedNote}>KYC has been approved by admin. You cannot modify documents.</Text>
-              )}
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.kycUploadBtn, (doc.uploading || kycStatus === 'approved') && styles.kycUploadBtnDisabled]}
+                    onPress={() => handleKycUpload(doc.type)}
+                    disabled={doc.uploading || kycStatus === 'approved'}
+                  >
+                    {doc.uploading
+                      ? <ActivityIndicator size="small" color={C.primary} />
+                      : <Text style={styles.kycUploadText}>{kycDocs[doc.key] ? 'Replace' : 'Upload'}</Text>
+                    }
+                  </TouchableOpacity>
+                </View>
+              ))}
             </View>
           )}
 
-          {/* Update Button */}
-          <TouchableOpacity
-            style={[styles.updateBtn, (saving || isVerified) && styles.disabledBtn]}
-            onPress={handleUpdateProfile}
-            disabled={saving || isVerified}
-          >
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.updateBtnText}>UPDATE PROFILE</Text>}
+          {/* Save Button */}
+          <TouchableOpacity style={[styles.saveBtn, saving && styles.saveBtnDisabled]} onPress={handleSave} disabled={saving}>
+            {saving ? <ActivityIndicator color="#fff" /> : (
+              <>
+                <Ionicons name="checkmark-outline" size={18} color="#fff" />
+                <Text style={styles.saveBtnText}>Save Changes</Text>
+              </>
+            )}
           </TouchableOpacity>
+
+          {/* Support & Legal Links */}
+          <View style={styles.linksSection}>
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('SupportScreen')}
+            >
+              <Ionicons name="help-circle-outline" size={20} color="#3b82f6" />
+              <Text style={styles.linkText}>Help & Support</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('ComplaintScreen')}
+            >
+              <Ionicons name="alert-circle-outline" size={20} color="#ef4444" />
+              <Text style={styles.linkText}>File Complaint</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('TermsAndConditionsScreen')}
+            >
+              <Ionicons name="document-text-outline" size={20} color="#8b5cf6" />
+              <Text style={styles.linkText}>Terms & Conditions</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.linkBtn}
+              onPress={() => navigation.navigate('PrivacyPolicyScreen')}
+            >
+              <Ionicons name="shield-checkmark-outline" size={20} color="#10b981" />
+              <Text style={styles.linkText}>Privacy Policy</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.textMuted} />
+            </TouchableOpacity>
+          </View>
 
           {/* Logout */}
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Text style={styles.logoutText}>LOGOUT</Text>
+            <Ionicons name="log-out-outline" size={18} color={C.danger} />
+            <Text style={styles.logoutText}>Sign Out</Text>
           </TouchableOpacity>
+
+          <View style={{ height: 40 }} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#121212' },
-  container: { flex: 1 },
-  scrollContent: { padding: 20, paddingBottom: 100 },
-  loadingContainer: { flex: 1, backgroundColor: '#121212', justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: '#bbb', marginTop: 12, fontSize: 16 },
+  container: { flex: 1, backgroundColor: C.bg },
+  scroll: { padding: 20, paddingBottom: 60 },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  header: { alignItems: 'center', marginBottom: 30 },
-  profilePicContainer: { width: 130, height: 130, borderRadius: 65, overflow: 'hidden', marginBottom: 16, position: 'relative' },
-  profileImage: { width: '100%', height: '100%', borderRadius: 65 },
-  profilePlaceholder: { width: '100%', height: '100%', backgroundColor: '#1E1E1E', justifyContent: 'center', alignItems: 'center', borderRadius: 65, borderWidth: 3, borderColor: '#4CAF50' },
-  placeholderInitial: { fontSize: 48, color: '#4CAF50', fontWeight: '700' },
-  addPhotoLabel: { fontSize: 12, color: '#4CAF50', marginTop: 6 },
-  uploadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
-  editBadge: { position: 'absolute', bottom: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  editText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  profileHeader: { alignItems: 'center', marginBottom: 28 },
+  photoWrap: { width: 100, height: 100, borderRadius: 50, marginBottom: 14, position: 'relative' },
+  photo: { width: 100, height: 100, borderRadius: 50 },
+  photoPlaceholder: { width: 100, height: 100, borderRadius: 50, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+  photoInitial: { fontSize: 40, fontWeight: '800' },
+  photoOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 50, alignItems: 'center', justifyContent: 'center' },
+  editPhotoBtn: { position: 'absolute', bottom: 2, right: 2, width: 28, height: 28, borderRadius: 14, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: C.bg },
+  profileName: { fontSize: 22, fontWeight: '800', color: C.textPrimary, marginBottom: 4 },
+  profileEmail: { fontSize: 13, color: C.textMuted, marginBottom: 12 },
+  badgesRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  entityBadge: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  entityBadgeText: { fontSize: 12, fontWeight: '700' },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.successLight, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: C.successBorder },
+  verifiedText: { fontSize: 12, fontWeight: '700', color: C.success },
 
-  name: { fontSize: 26, fontWeight: '700', color: '#fff', marginBottom: 8 },
-  badgesRow: { flexDirection: 'row', gap: 10 },
-  entityBadge: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 30 },
-  entityText: { color: '#fff', fontWeight: '700', fontSize: 13 },
-  verifiedBadge: { backgroundColor: '#4CAF50', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 30 },
-  verifiedText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  section: { backgroundColor: C.surface, borderRadius: R.xl, padding: 18, marginBottom: 16, borderWidth: 1, borderColor: C.border, ...S.card },
+  sectionTitle: { fontSize: 13, fontWeight: '700', color: C.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 16 },
 
-  section: { backgroundColor: '#1E1E1E', borderRadius: 16, padding: 20, marginBottom: 20 },
-  sectionTitle: { fontSize: 18, fontWeight: '600', color: '#fff', marginBottom: 16 },
-  label: { fontSize: 14, color: '#bbb', marginBottom: 6 },
-  input: { backgroundColor: '#2A2A2A', borderRadius: 12, padding: 14, color: '#fff', fontSize: 16, marginBottom: 16 },
-  textArea: { height: 80, textAlignVertical: 'top' },
-  nonEditable: { backgroundColor: '#2A2A2A', borderRadius: 12, padding: 14, color: '#888', fontSize: 16, marginBottom: 16 },
+  fieldGroup: { marginBottom: 14 },
+  label: { fontSize: 13, fontWeight: '600', color: C.textSecondary, marginBottom: 6 },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surfaceAlt, borderRadius: R.md, borderWidth: 1.5, borderColor: C.border, paddingHorizontal: 12 },
+  inputWrapFocused: { borderColor: C.primary, backgroundColor: C.primaryLight },
+  textAreaWrap: { alignItems: 'flex-start', paddingTop: 10 },
+  inputIcon: { marginRight: 8 },
+  inputInner: { flex: 1, fontSize: 14, color: C.textPrimary, paddingVertical: 11 },
+  textAreaInner: { minHeight: 70, paddingVertical: 0 },
+  readonlyWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.surfaceAlt, borderRadius: R.md, borderWidth: 1.5, borderColor: C.border, paddingHorizontal: 12, paddingVertical: 11 },
+  readonlyText: { flex: 1, fontSize: 14, color: C.textMuted },
+  lockIcon: { marginLeft: 4 },
 
-  capGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  capBadge: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 30, minWidth: '47%' },
-  capText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  capsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  capBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20, borderWidth: 1 },
+  capText: { fontSize: 12, fontWeight: '600' },
 
-  kycStatusBadge: { alignSelf: 'flex-start', paddingHorizontal: 18, paddingVertical: 8, borderRadius: 30, marginBottom: 12 },
-  kycStatusText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  rejectionReason: { color: '#f44336', fontSize: 14, marginBottom: 16 },
+  kycStatusBox: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: R.md, padding: 12, marginBottom: 14, borderWidth: 1 },
+  kycStatusText: { fontSize: 13, fontWeight: '700' },
+  kycRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.border },
+  kycDocLabel: { fontSize: 14, fontWeight: '600', color: C.textPrimary },
+  kycDocStatus: { fontSize: 12, marginTop: 2 },
+  kycUploadBtn: { backgroundColor: C.primaryLight, borderRadius: R.md, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: C.primary },
+  kycUploadBtnDisabled: { opacity: 0.4 },
+  kycUploadText: { color: C.primary, fontSize: 13, fontWeight: '700' },
 
-  kycRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#333' },
-  kycLabel: { color: '#ddd', fontSize: 16, flex: 1 },
-  uploadedText: { color: '#4CAF50', fontWeight: '600' },
-  notUploadedText: { color: '#888' },
-  kycUploadBtn: { backgroundColor: '#4CAF50', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 },
-  kycUploadText: { color: '#fff', fontWeight: '700' },
-  disabledBtn: { opacity: 0.5 },
-  approvedNote: { color: '#4CAF50', fontSize: 13, marginTop: 12, textAlign: 'center' },
+  saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.primary, borderRadius: R.lg, paddingVertical: 15, marginBottom: 12, ...S.btn },
+  saveBtnDisabled: { opacity: 0.6 },
+  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
-  updateBtn: { backgroundColor: '#4CAF50', borderRadius: 14, paddingVertical: 18, alignItems: 'center', marginTop: 10 },
-  updateBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  linksSection: {
+    backgroundColor: C.surface,
+    borderRadius: R.lg,
+    padding: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  linkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: R.md,
+  },
+  linkText: {
+    flex: 1,
+    color: C.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
 
-  logoutBtn: { backgroundColor: '#f44336', borderRadius: 14, paddingVertical: 18, alignItems: 'center', marginTop: 16 },
-  logoutText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: R.lg, paddingVertical: 14, borderWidth: 1.5, borderColor: C.dangerBorder, backgroundColor: C.dangerLight },
+  logoutText: { color: C.danger, fontSize: 15, fontWeight: '700' },
 });
-
-export default AdvancedProfileScreen;
